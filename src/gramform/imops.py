@@ -88,32 +88,36 @@ def form_regex(
     unarised: Optional[str] = None,
     right: bool = False,
 ):
-    typedict = {
-        'int': 'i',
-        'float': 'f',
-        'nnint': 'nni',
-        'nnfloat': 'nnf',
-        'nnintseq': 'nnii',
-    }
-    scalar = ''
-    paramstr = ''
-    right = r'\,\.\.\.' if right else ''
-    if unarised is not None:
-        unarised = typedict[unarised]
-        scalar = '{{(?P<scalar>{}){}}}'.format(
-            sub_regex(f'{{{unarised}}}'),
-            right,
-        )
-    if params is not None:
-        paramstr = tuple(
-            '(?P<{param}>{kind})'.format(
-                param=param, kind=sub_regex(f'{{{typedict[kind]}}}')
+    def _form_regex():
+        nonlocal unarised, right
+        typedict = {
+            'int': 'i',
+            'float': 'f',
+            'nnint': 'nni',
+            'nnfloat': 'nnf',
+            'nnintseq': 'nnii',
+        }
+        scalar = ''
+        paramstr = ''
+        right = r'\,\.\.\.' if right else ''
+        if unarised is not None:
+            unarised = typedict[unarised]
+            scalar = '{{(?P<scalar>{}){}}}'.format(
+                sub_regex(f'{{{unarised}}}'),
+                right,
             )
-            for param, kind in params.items()
-        )
-        paramstr = r'\|?'.join(paramstr)
-        paramstr = r'\[?' + paramstr + r'\]?'
-    return f'[ ]?-{cmd}{paramstr}{scalar}[ ]?'
+        if params is not None:
+            paramstr = tuple(
+                '(?P<{param}>{kind})'.format(
+                    param=param, kind=sub_regex(f'{{{typedict[kind]}}}')
+                )
+                for param, kind in params.items()
+            )
+            paramstr = r'\|?'.join(paramstr)
+            paramstr = r'\[?' + paramstr + r'\]?'
+        return f'[ ]?-{cmd}{paramstr}{scalar}[ ]?'
+
+    return _form_regex
 
 
 # TODO: This doesn't actually do anything yet. The last valid argument takes
@@ -281,7 +285,7 @@ class NiftiFileInterpreter(LeafInterpreter):
 class BinariseSuffixLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='bin',
             params={
                 'threshold': 'float',
@@ -329,7 +333,7 @@ class BinariseNode(TransformPrimitive):
 class UnaryThresholdSuffixLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='thr',
             params={
                 'fill': 'float',
@@ -379,7 +383,7 @@ class UnaryThresholdNode(TransformPrimitive):
 class BinaryThresholdInfixLiteralisation(Literalisation):
     affix: str = 'infix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='thr',
             params={
                 'fill': 'float',
@@ -424,7 +428,7 @@ class BinaryThresholdNode(TransformPrimitive):
 class UnaryUpperThresholdSuffixLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='uthr',
             params={
                 'fill': 'float',
@@ -474,7 +478,7 @@ class UnaryUpperThresholdNode(TransformPrimitive):
 class UpperThresholdInfixLiteralisation(Literalisation):
     affix: str = 'infix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='uthr',
             params={
                 'fill': 'float',
@@ -557,7 +561,7 @@ def _morphological_transform(
 class DilateSuffixLiteralisation(MorphologicalSuffixLiteralisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='dil',
             params={
                 'kernel_size': 'nnintseq',
@@ -602,7 +606,7 @@ class DilateNode(TransformPrimitive):
 class ErodeSuffixLiteralisation(MorphologicalSuffixLiteralisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='ero',
             params={
                 'kernel_size': 'nnintseq',
@@ -647,7 +651,7 @@ class ErodeNode(TransformPrimitive):
 class OpeningSuffixLiteralisation(MorphologicalSuffixLiteralisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='opening',
             params={
                 'kernel_size': 'nnintseq',
@@ -692,7 +696,7 @@ class OpeningNode(TransformPrimitive):
 class ClosingSuffixLiteralisation(MorphologicalSuffixLiteralisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='closing',
             params={
                 'kernel_size': 'nnintseq',
@@ -737,7 +741,7 @@ class ClosingNode(TransformPrimitive):
 class FillHolesSuffixLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='fillholes',
             params={
                 'kernel_size': 'nnintseq',
@@ -810,7 +814,7 @@ class FillHolesNode(TransformPrimitive):
 class NegationSuffixLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='neg',
         )
     )
@@ -845,10 +849,6 @@ class NegationNode(TransformPrimitive):
 # -------------------- General Binary Infix Operations -------------------- #
 
 
-def curry_transform(*pparams, **params):
-    return None
-
-
 def binary_transform(
     transform: Callable,
     f_lhs: Callable,
@@ -878,7 +878,7 @@ def binary_transform(
 class UnionInfixLiteralisation(Literalisation):
     affix: str = 'infix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='or',
         )
     )
@@ -912,7 +912,7 @@ class UnionNode(TransformPrimitive):
 class IntersectionInfixLiteralisation(Literalisation):
     affix: str = 'infix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='and',
         )
     )
@@ -951,7 +951,7 @@ class IntersectionNode(TransformPrimitive):
 class UnaryAdditionSuffixLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='add',
             unarised='float',
         )
@@ -990,7 +990,7 @@ class UnaryAdditionNode(TransformPrimitive):
 class AdditionInfixLiteralisation(Literalisation):
     affix: str = 'infix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='add',
         )
     )
@@ -1024,7 +1024,7 @@ class AdditionNode(TransformPrimitive):
 class UnarySubtractionSuffixLeftLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='sub',
             unarised='float',
         )
@@ -1040,7 +1040,7 @@ class UnarySubtractionSuffixLeftLiteralisation(Literalisation):
 class UnarySubtractionSuffixRightLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='sub',
             unarised='float',
             right=True,
@@ -1088,7 +1088,7 @@ class UnarySubtractionNode(TransformPrimitive):
 class SubtractionInfixLiteralisation(Literalisation):
     affix: str = 'infix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='sub',
         )
     )
@@ -1122,7 +1122,7 @@ class SubtractionNode(TransformPrimitive):
 class UnaryMultiplicationSuffixLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='mul',
             unarised='float',
         )
@@ -1163,7 +1163,7 @@ class UnaryMultiplicationNode(TransformPrimitive):
 class MultiplicationInfixLiteralisation(Literalisation):
     affix: str = 'infix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='mul',
         )
     )
@@ -1197,7 +1197,7 @@ class MultiplicationNode(TransformPrimitive):
 class UnaryDivisionSuffixLeftLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='div',
             unarised='float',
         )
@@ -1213,7 +1213,7 @@ class UnaryDivisionSuffixLeftLiteralisation(Literalisation):
 class UnaryDivisionSuffixRightLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='div',
             unarised='float',
             right=True,
@@ -1261,7 +1261,7 @@ class UnaryDivisionNode(TransformPrimitive):
 class DivisionInfixLiteralisation(Literalisation):
     affix: str = 'infix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='div',
         )
     )
@@ -1295,7 +1295,7 @@ class DivisionNode(TransformPrimitive):
 class UnaryRemainderSuffixLeftLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='mod',
             unarised='int',
         )
@@ -1311,7 +1311,7 @@ class UnaryRemainderSuffixLeftLiteralisation(Literalisation):
 class UnaryRemainderSuffixRightLiteralisation(Literalisation):
     affix: str = 'suffix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='mod',
             unarised='int',
             right=True,
@@ -1359,7 +1359,7 @@ class UnaryRemainderNode(TransformPrimitive):
 class RemainderInfixLiteralisation(Literalisation):
     affix: str = 'infix'
     regex: str = field(
-        default_factory=lambda: form_regex(
+        default_factory=form_regex(
             cmd='mod',
         )
     )
