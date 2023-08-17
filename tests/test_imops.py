@@ -8,10 +8,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
+import nibabel as nb
+import templateflow.api as tflow
 from pkg_resources import resource_filename
 from gramform.imops import (
     ImageMathsGrammar,
     LeafInterpreter,
+    NiftiFileInterpreter,
     scalar_leaf_ingress,
     select_args,
 )
@@ -151,3 +154,44 @@ def test_remainder():
     img_out, _ = f(np.full((10, 10), 17), np.full((10, 10), 13))
     assert img_out.shape == (10, 10)
     assert (img_out == 1).all()
+
+
+def test_probseg_masks():
+    gm = tflow.get(
+        'MNI152NLin2009cAsym', resolution=2, suffix='probseg', label='GM'
+    )
+    wm = tflow.get(
+        'MNI152NLin2009cAsym', resolution=2, suffix='probseg', label='WM'
+    )
+    csf = tflow.get(
+        'MNI152NLin2009cAsym', resolution=2, suffix='probseg', label='CSF'
+    )
+
+    grammar = ImageMathsGrammar(default_interpreter=NiftiFileInterpreter())
+    results = resource_filename(
+        'gramform',
+        '_results/'
+    )
+
+    # Get the union of the p > 0.9 WM and CSF masks.
+    model_wmcsf = '(IMGa -bin[0.9]) -or (IMGb -bin[0.9])'
+    f_wmcsf = grammar.compile(model_wmcsf)
+    out_wmcsf, meta_wmcsf = f_wmcsf(wm, csf)
+    nifti_wmcsf = nb.Nifti1Image(
+        out_wmcsf,
+        affine=meta_wmcsf['affine'],
+        header=meta_wmcsf['header'],
+    )
+    nifti_wmcsf.to_filename(f'{results}/wmcsf.nii.gz')
+
+    model_gm = (
+        'IMGa -mul (((IMGb -bin[0.9]) -or (IMGc -bin[0.9])) -dil[1] -neg)'
+    )
+    f_gm = grammar.compile(model_gm)
+    out_gm, meta_gm = f_gm(gm, wm, csf)
+    nifti_gm = nb.Nifti1Image(
+        out_gm,
+        affine=meta_gm['affine'],
+        header=meta_gm['header'],
+    )
+    nifti_gm.to_filename(f'{results}/gm.nii.gz')
