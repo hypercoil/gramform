@@ -48,7 +48,7 @@ class DataTagGrammar(Grammar):
         default_factory=lambda: TagSelectInterpreter()
     )
     default_root_transform: Optional[TransformPrimitive] = field(
-        default_factory=lambda: ReturnSelected()
+        default_factory=lambda: ReturnSelection()
     )
 
 
@@ -65,7 +65,7 @@ class TagSelectInterpreter(LeafInterpreter):
 
 
 @dataclass(frozen=True)
-class ReturnSelected(TransformPrimitive):
+class ReturnSelection(TransformPrimitive):
     min_arity: int = 1
     max_arity: int = 1
     priority: int = float('inf')
@@ -76,7 +76,7 @@ class ReturnSelected(TransformPrimitive):
     def __call__(self, *pparams, **params) -> Callable:
         f = pparams[0]
 
-        def return_selected(
+        def return_selection(
             arg: Any,
             /,
             **datatypes,
@@ -84,7 +84,7 @@ class ReturnSelected(TransformPrimitive):
             keys = set(datatypes.keys())
             return {k: datatypes[k] for k in f(arg, keys)[0]}
 
-        return return_selected
+        return return_selection
 
 
 # ---------------------------------- Union --------------------------------- #

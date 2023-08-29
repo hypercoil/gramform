@@ -22,7 +22,15 @@ try:
     from .imops import (
         ImageMathsGrammar,
         NiftiFileInterpreter,
+        NiftiFileSink,
         NiftiObjectInterpreter,
+        NiftiObjectSink,
     )
 except ImportError:
     pass
+
+from .tagops import (
+    DataTagGrammar,
+    TagSelectInterpreter,
+    ReturnSelection,
+)

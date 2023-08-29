@@ -105,7 +105,7 @@ Note that this system is not particularly "smart" or robust at this time, and it
 ``gramform`` can be used to perform simple image mathematics operations. The following example demonstrates how to use ``gramform`` to perform voxelwise arithmetic on images (requires ``nibabel``, ``jax``, and for this example ``templateflow``):
 
 ```python
-from gramform.imops import ImageMathsGrammar, NiftiFileInterpreter
+from gramform.imops import (ImageMathsGrammar, NiftiFileInterpreter)
 import nibabel as nb
 import templateflow.api as tflow
 
@@ -131,12 +131,7 @@ grammar = ImageMathsGrammar(default_interpreter=NiftiFileInterpreter())
 # Get the union of the p > 0.9 WM and CSF masks.
 model_wmcsf = '(IMGa -bin[0.9]) -or (IMGb -bin[0.9])'
 f_wmcsf = grammar.compile(model_wmcsf)
-out_wmcsf, meta_wmcsf = f_wmcsf(wm, csf)
-nifti_wmcsf = nb.Nifti1Image(
-    out_wmcsf,
-    affine=meta_wmcsf['affine'],
-    header=meta_wmcsf['header'],
-)
+nifti_wmcsf = f_wmcsf(wm, csf)
 nifti_wmcsf.to_filename('/tmp/wmcsf.nii.gz')
 
 
@@ -144,12 +139,7 @@ nifti_wmcsf.to_filename('/tmp/wmcsf.nii.gz')
 # p > 0.9 WM and CSF masks.
 model_gm = 'IMGa -mul (((IMGb -bin[0.9]) -or (IMGc -bin[0.9])) -dil[1] -neg)'
 f_gm = grammar.compile(model_gm)
-out_gm, meta_gm = f_gm(gm, wm, csf)
-nifti_gm = nb.Nifti1Image(
-    out_gm,
-    affine=meta_gm['affine'],
-    header=meta_gm['header'],
-)
+nifti_gm = f_gm(gm, wm, csf)
 nifti_gm.to_filename('/tmp/gm.nii.gz')
 ```
 
@@ -158,12 +148,7 @@ Note that this system has some significant limitations, notable among them the i
 ```python
 model_fail = 'IMGa -mul ((IMGa -bin[0.9]) -or (IMGb -bin[0.9]))'
 f_fail = grammar.compile(model_fail)
-out_fail, meta_fail = f_fail(gm, wm)
-nifti_fail = nb.Nifti1Image(
-    out_fail,
-    affine=meta_fail['affine'],
-    header=meta_fail['header'],
-)
+nifti_fail = f_fail(gm, wm)
 nifti_fail.to_filename('/tmp/fail.nii.gz')
 ```
 

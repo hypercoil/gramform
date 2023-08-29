@@ -14,6 +14,7 @@ from typing import (
     Callable,
     Dict,
     Literal,
+    Mapping,
     Optional,
     Sequence,
     Tuple,
@@ -243,6 +244,9 @@ class ImageMathsGrammar(Grammar):
     default_interpreter: Optional[LeafInterpreter] = field(
         default_factory=lambda: NiftiObjectInterpreter()
     )
+    default_root_transform: Optional[TransformPrimitive] = field(
+        default_factory=lambda: NiftiObjectSink()
+    )
 
 
 @dataclass(frozen=True)
@@ -276,6 +280,59 @@ class NiftiFileInterpreter(LeafInterpreter):
                 return scalar_leaf_ingress(leaf)
 
         return img_and_meta
+
+
+@dataclass(frozen=True)
+class NiftiObjectSink(TransformPrimitive):
+    min_arity: int = 1
+    max_arity: int = 1
+    priority: int = float('inf')
+    associative: bool = False
+    commutative: bool = False
+    literals: Sequence[Literalisation] = ()
+
+    def __call__(self, *pparams, **params) -> Callable:
+        f = pparams[0]
+
+        def return_selected(
+            *args,
+        ) -> Mapping[str, Any]:
+            img, meta = f(*args)
+            return nb.Nifti1Image(
+                img,
+                affine=meta['affine'],
+                header=meta['header'],
+            )
+
+        return return_selected
+
+
+@dataclass(frozen=True)
+class NiftiFileSink(TransformPrimitive):
+    min_arity: int = 1
+    max_arity: int = 1
+    priority: int = float('inf')
+    associative: bool = False
+    commutative: bool = False
+    literals: Sequence[Literalisation] = ()
+
+    def __call__(self, *pparams, **params) -> Callable:
+        f = pparams[0]
+
+        def return_selected(
+            *args,
+            output: str = 'out.nii.gz',
+        ) -> Mapping[str, Any]:
+            img, meta = f(*args)
+            nifti = nb.Nifti1Image(
+                img,
+                affine=meta['affine'],
+                header=meta['header'],
+            )
+            nb.save(nifti, output)
+            return output
+
+        return return_selected
 
 
 # ------------------------------- Binarise -------------------------------- #

@@ -15,6 +15,8 @@ from gramform.imops import (
     ImageMathsGrammar,
     LeafInterpreter,
     NiftiFileInterpreter,
+    NiftiFileSink,
+    NiftiObjectSink,
     scalar_leaf_ingress,
     select_args,
 )
@@ -34,7 +36,10 @@ class TensorLeafInterpreter(LeafInterpreter):
 def test_thresh():
     key = jax.random.PRNGKey(0)
     arg = jax.random.uniform(key, (10, 10, 10))
-    grammar = ImageMathsGrammar(default_interpreter=TensorLeafInterpreter())
+    grammar = ImageMathsGrammar(
+        default_interpreter=TensorLeafInterpreter(),
+        default_root_transform=None,
+    )
     op_str = 'ARGa -thr (ARGb -bin[0.5])'
     f = grammar.compile(op_str)
     img_out, _ = f(arg, arg)
@@ -45,7 +50,10 @@ def test_thresh():
 
 
 def test_morphological_atoms():
-    grammar = ImageMathsGrammar(default_interpreter=TensorLeafInterpreter())
+    grammar = ImageMathsGrammar(
+        default_interpreter=TensorLeafInterpreter(),
+        default_root_transform=None,
+    )
 
     data = np.zeros((10, 10))
     data[2:8, 2:8] = 1
@@ -88,7 +96,10 @@ def test_morphological_atoms():
 
 
 def test_logical_atoms():
-    grammar = ImageMathsGrammar(default_interpreter=TensorLeafInterpreter())
+    grammar = ImageMathsGrammar(
+        default_interpreter=TensorLeafInterpreter(),
+        default_root_transform=None,
+    )
 
     data0 = np.zeros((10, 10))
     data0[:, :7] = 1
@@ -126,7 +137,10 @@ def test_logical_atoms():
 
 
 def test_compositions():
-    grammar = ImageMathsGrammar(default_interpreter=TensorLeafInterpreter())
+    grammar = ImageMathsGrammar(
+        default_interpreter=TensorLeafInterpreter(),
+        default_root_transform=None,
+    )
 
     key = jax.random.PRNGKey(0)
     key0, key1, key2 = jax.random.split(key, 3)
@@ -148,7 +162,10 @@ def test_compositions():
 
 
 def test_remainder():
-    grammar = ImageMathsGrammar(default_interpreter=TensorLeafInterpreter())
+    grammar = ImageMathsGrammar(
+        default_interpreter=TensorLeafInterpreter(),
+        default_root_transform=None,
+    )
     op_str = 'ARGa -mod ARGb -mod 3'
     f = grammar.compile(op_str)
     img_out, _ = f(np.full((10, 10), 17), np.full((10, 10), 13))
@@ -167,7 +184,10 @@ def test_probseg_masks():
         'MNI152NLin2009cAsym', resolution=2, suffix='probseg', label='CSF'
     )
 
-    grammar = ImageMathsGrammar(default_interpreter=NiftiFileInterpreter())
+    grammar = ImageMathsGrammar(
+        default_interpreter=NiftiFileInterpreter(),
+        default_root_transform=NiftiObjectSink(),
+    )
     results = resource_filename(
         'gramform',
         '_results/'
@@ -176,22 +196,16 @@ def test_probseg_masks():
     # Get the union of the p > 0.9 WM and CSF masks.
     model_wmcsf = '(IMGa -bin[0.9]) -or (IMGb -bin[0.9])'
     f_wmcsf = grammar.compile(model_wmcsf)
-    out_wmcsf, meta_wmcsf = f_wmcsf(wm, csf)
-    nifti_wmcsf = nb.Nifti1Image(
-        out_wmcsf,
-        affine=meta_wmcsf['affine'],
-        header=meta_wmcsf['header'],
-    )
+    nifti_wmcsf = f_wmcsf(wm, csf)
     nifti_wmcsf.to_filename(f'{results}/wmcsf.nii.gz')
 
+    grammar = ImageMathsGrammar(
+        default_interpreter=NiftiFileInterpreter(),
+        default_root_transform=NiftiFileSink(),
+    )
     model_gm = (
         'IMGa -mul (((IMGb -bin[0.9]) -or (IMGc -bin[0.9])) -dil[1] -neg)'
     )
     f_gm = grammar.compile(model_gm)
-    out_gm, meta_gm = f_gm(gm, wm, csf)
-    nifti_gm = nb.Nifti1Image(
-        out_gm,
-        affine=meta_gm['affine'],
-        header=meta_gm['header'],
-    )
-    nifti_gm.to_filename(f'{results}/gm.nii.gz')
+    out_path = f_gm(gm, wm, csf, output=f'{results}/gm.nii.gz')
+    assert out_path == f'{results}/gm.nii.gz'
