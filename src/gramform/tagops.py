@@ -78,6 +78,7 @@ class ReturnSelected(TransformPrimitive):
 
         def return_selected(
             arg: Any,
+            /,
             **datatypes,
         ) -> Mapping[str, Any]:
             keys = set(datatypes.keys())

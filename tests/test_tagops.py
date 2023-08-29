@@ -38,8 +38,24 @@ def tags():
     }
 
 
+def test_substr_compile():
+    grammar = DataTagGrammar()
+    f = grammar.compile('ab&b')
+    g = grammar.compile('b&ab')
+    assert(
+        set(f(tags(), **dataset()).keys()) ==
+        set(g(tags(), **dataset()).keys())
+    )
+
+    f = grammar.compile('ab&bcd&b&bcde&abcde&bc&abc&abcd')
+    assert(set(f(tags(), **dataset()).keys()) == {'b'})
+
+    f = grammar.compile('a|b&ab|abc|de&abcde')
+
+
 def test_tags():
     grammar = DataTagGrammar()
+
     f = grammar.compile('~a&bcd')
     assert(set(f(tags(), **dataset()).keys()) == {'b', 'c', 'd'})
 

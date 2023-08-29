@@ -14,6 +14,7 @@ import re
 from abc import abstractmethod, abstractstaticmethod
 from collections import defaultdict
 from copy import deepcopy
+from functools import partial
 from hashlib import sha256
 from typing import (
     Any,
@@ -133,6 +134,10 @@ class IndexedNestedString:
         if end is None:
             end = start + len(content)
         if loc_type == 'index':
+            if (start > 0 and self.index[start] == self.index[start - 1]) or (
+                end < len(self) - 1 and self.index[end - 1] == self.index[end]
+            ):
+                return self
             start = self.index[start]
             end = self.index[end]
         if start == end:
@@ -798,23 +803,31 @@ class Grammar:
     def verify_level(
         self,
         tree: SyntacticTree,
+        correct: bool = False,
     ) -> SyntacticTree:
         if len(tree.children) != 0:
-            raise UnparsedTreeError(
-                f'Unparsed non-transform node {tree} '
-                f'(full version: {tree.materialise(recursive=True)}) '
-                f'has children: {[v for v in tree.children.values()]}. '
-                'All nodes must be either transforms or terminal (leaves).'
-            )
+            if correct:
+                tree.content = IndexedNestedString(
+                    IndexedNestedString(tree.materialise(recursive=True)),
+                )
+                tree.children = {}
+            else:
+                raise UnparsedTreeError(
+                    f'Unparsed non-transform node {tree} '
+                    f'(full version: {tree.materialise(recursive=True)}) '
+                    f'has children: {[v for v in tree.children.values()]}. '
+                    'All nodes must be either transforms or terminal (leaves).'
+                )
         return tree
 
     def verify_parse(
         self,
         tree: SyntacticTree,
+        correct: bool = False,
     ) -> None:
         Grammar.recur_depth_first(
             tree=tree,
-            f=self.verify_level,
+            f=partial(self.verify_level, correct=correct),
             skip_transform_roots=True,
         )
 
@@ -927,7 +940,7 @@ class Grammar:
         self,
         tree: SyntacticTree,
     ) -> TransformTree:
-        self.verify_parse(tree)
+        self.verify_parse(tree, correct=True)
         tree = self.transform_impl(tree)
         return Grammar.annotate_leaf_count(tree)
 
