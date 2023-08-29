@@ -280,14 +280,18 @@ class SyntacticTree:
         child_id: str,
     ) -> IndexedNestedString:
         content = self.content
+        new_loc = []
         for start, end in loc:
-            content = content.substitute(
+            new_content = content.substitute(
                 content=ChildToken(child_id, length=end - start),
                 start=start,
                 end=end,
                 loc_type='index',
             )
-        return content
+            if content != new_content:
+                new_loc.append((start, end))
+            content = new_content
+        return content, new_loc
 
     def _scan_content_and_embed_token(
         self,
@@ -357,7 +361,7 @@ class SyntacticTree:
 
         contentstr = self.materialise(recursive=recursive)
         loc = [m.span() for m in re.finditer(re.escape(query), contentstr)]
-        content = self._scan_content_and_embed_child(loc, child_id)
+        content, loc = self._scan_content_and_embed_child(loc, child_id)
 
         if nest:
             child = self._child_carry_nested_content(

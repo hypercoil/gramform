@@ -1,2 +1,2 @@
-recursive-include src/gramform/_resources *
-recursive-include src/gramform/_results *
+graft src/gramform/_resources
+include src/gramform/_results/.empty
