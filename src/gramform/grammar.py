@@ -361,7 +361,12 @@ class SyntacticTree:
             circumfix = (query[0], query[-1])
             child_text = query[1:-1]
         child_id = self.hashfn(child_text.encode('utf-8')).hexdigest()
-        if child_id in self.children:
+        # It seems like the parser sometimes misses adding the child node at
+        # the highest level, and it's later pruned away, resulting in an
+        # inscrutable-looking TransformArityError. Currently we circumvent
+        # this by "looking ahead" to the pruned version here, but we should
+        # ideally figure out why it misses in the first place.
+        if child_id in self.prune_children(self.content, self.children):
             return child_id
 
         contentstr = self.materialise(recursive=recursive)

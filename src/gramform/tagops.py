@@ -82,7 +82,7 @@ class ReturnSelection(TransformPrimitive):
             **datatypes,
         ) -> Mapping[str, Any]:
             keys = set(datatypes.keys())
-            return {k: datatypes[k] for k in f(arg, keys)[0]}
+            return {k: datatypes[k] for k in f(arg, keys)[0] if k in keys}
 
         return return_selection
 
@@ -147,7 +147,6 @@ class IntersectionNode(TransformPrimitive):
             keys: Sequence[str],
         ) -> Tuple[Mapping[str, Any], Sequence[str]]:
             arg = tuple(set(f(arg, keys)[0]) for f in pparams)
-            print(arg)
             arg = reduce((lambda x, y: x & y), arg)
             return arg, keys
 
