@@ -37,6 +37,7 @@ def confound_formula_shorthand():
     return {
         'wm': 'white_matter',
         'gsr': 'global_signal',
+        'gs': 'global_signal',
         'rps': 'trans_x + trans_y + trans_z + rot_x + rot_y + rot_z',
         'fd': 'framewise_displacement',
         'dv': 'std_dvars',
@@ -239,7 +240,7 @@ class BackwardDifferenceNode(TransformPrimitive):
                 if o in params['order']:
                     arg.columns = [
                         f'{c}_derivative{o}' if o != 0 else c
-                        for c in arg.columns
+                        for c in orig.columns
                     ]
                     acc.append(arg)
             if 0 in params['order']:

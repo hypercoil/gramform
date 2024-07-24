@@ -50,6 +50,29 @@ def spec_base(model_formula, shape):
     return out, meta
 
 
+def test_deriv_spec():
+    out, _ = spec_base(
+        model_formula='dd2(gs)',
+        shape=3,
+    )
+    for name in (
+        'global_signal',
+        'global_signal_derivative1',
+        'global_signal_derivative2',
+    ):
+        assert name in out.columns
+
+    out, _ = spec_base(
+        model_formula='gs + d2(gs)',
+        shape=2,
+    )
+    for name in (
+        'global_signal',
+        'global_signal_derivative2',
+    ):
+        assert name in out.columns
+
+
 def test_36ev_spec():
     out, _ = spec_base(
         model_formula='dd1((rps + wm + csf + gsr)^^2)',
