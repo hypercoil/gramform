@@ -14,7 +14,7 @@ def clean(session):
 @nox.session(python=["3.10", "3.11"])
 def tests(session):
     session.install('jax[cpu]')
-    session.install('.[full,test]')
+    session.install('.[full,dev]')
     session.run(
         'pytest',
         '--cov', 'gramform',
