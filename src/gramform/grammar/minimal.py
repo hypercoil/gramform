@@ -39,8 +39,12 @@ CONCATENATE = Primitive("CONCATENATE", is_associative=True)
 POWER = Primitive("POWER")
 BACKDIFF = Primitive("BACKDIFF")
 RANGE = Primitive("RANGE")
-ENUM = Primitive("ENUM")
+ENUM = Primitive("ENUM", is_associative=True)
 INDICATOR = Primitive("INDICATOR")
+UNION = Primitive("UNION", is_associative=True)
+INTERSECTION = Primitive("INTERSECTION", is_associative=True)
+NEGATION = Primitive("NEGATION")
+SCATTER = Primitive("SCATTER")
 CONDITION_EQUAL = Primitive("CONDITION_EQUAL", is_associative=True)
 CONDITION_NOT_EQUAL = Primitive("CONDITION_NOT_EQUAL", is_associative=True)
 CONDITION_LESS = Primitive("CONDITION_LESS")
@@ -72,7 +76,7 @@ class MinimalGrammar:
         'RANGE',
         'BACKDIFF',
         'BACKDIFF_INCLUSIVE',
-        'ENUM',
+        'ENUM_SEP',
         'INDICATOR',
         'CONDITION_EQUAL',
         'CONDITION_NOT_EQUAL',
@@ -80,6 +84,10 @@ class MinimalGrammar:
         'CONDITION_LESS_EQUAL',
         'CONDITION_GREATER',
         'CONDITION_GREATER_EQUAL',
+        'UNION',
+        'INTERSECTION',
+        'NEGATION',
+        'SCATTER',
         'LPAREN',
         'RPAREN',
         'LBRACKET',
@@ -95,13 +103,17 @@ class MinimalGrammar:
     t_POWER = r'\^'
     t_POWER_INCLUSIVE = r'\^\^'
     t_RANGE = r'\-'
-    t_ENUM = r','
+    t_ENUM_SEP = r','
     t_CONDITION_EQUAL = r'='
     t_CONDITION_NOT_EQUAL = r'(<>|!=|~=)'
     t_CONDITION_LESS = r'<'
     t_CONDITION_LESS_EQUAL = r'<='
     t_CONDITION_GREATER = r'>'
     t_CONDITION_GREATER_EQUAL = r'>='
+    t_UNION = r'\|\|'
+    t_INTERSECTION = r'\&\&'
+    t_NEGATION = r'!'
+    t_SCATTER = r'\:\:\:'
     t_LPAREN = r'\('
     t_RPAREN = r'\)'
     t_LBRACKET = r'\['
@@ -132,7 +144,14 @@ class MinimalGrammar:
             'CONDITION_GREATER_EQUAL',
         ),
         ('left', 'CONCATENATE'),
-        ('left', 'POWER', 'POWER_INCLUSIVE'),
+        (
+            'left',
+            'POWER',
+            'POWER_INCLUSIVE',
+            'BACKDIFF',
+            'BACKDIFF_INCLUSIVE',
+        ),
+        ('left', 'ENUM_SEP'),
         ('left', 'RANGE'),
     )
 
@@ -159,6 +178,10 @@ class MinimalGrammar:
     def p_expression_range(p):
         'expression : expression RANGE expression'
         p[0] = RANGE.bind(p[1], p[3])
+
+    def p_expression_enum(p):
+        'expression : expression ENUM_SEP expression'
+        p[0] = ENUM.bind(p[1], p[3])
 
     def p_expression_indicator(p):
         'expression : INDICATOR parameter'
@@ -187,6 +210,22 @@ class MinimalGrammar:
     def p_expression_condition_greater_equal(p):
         'expression : expression CONDITION_GREATER_EQUAL expression'
         p[0] = CONDITION_GREATER_EQUAL.bind(p[1], p[3])
+
+    def p_expression_union(p):
+        'expression : expression UNION expression'
+        p[0] = UNION.bind(p[1], p[3])
+
+    def p_expression_intersection(p):
+        'expression : expression INTERSECTION expression'
+        p[0] = INTERSECTION.bind(p[1], p[3])
+
+    def p_expression_negation(p):
+        'expression : NEGATION expression'
+        p[0] = NEGATION.bind(p[2])
+
+    def p_expression_scatter(p):
+        'expression : SCATTER expression'
+        p[0] = SCATTER.bind(p[2])
 
     def p_expression_paren_term(p):
         'expression : LPAREN expression RPAREN'
@@ -224,7 +263,8 @@ def MinimalGrammarParser(**params):
 
 def main():
     #expr = '(x+y+z)^^2+(x+y+z)+((x+y+z)^2+(x+y+z))^3.13-5'
-    expr = '(x+y+z)^^2-3 + I_[x=y] + dd_[2](x)'
+    #expr = '(x+y+z)^^2-3 + I_[x=y] + d_[1,4-5](x)'
+    expr = ':::!((I_[x=y] && I_[x=z]) || I_[x>=w])'
     lexer = MinimalGrammarLexer()
     parser = MinimalGrammarParser()
     lexer.input(expr)
