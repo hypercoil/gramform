@@ -11,6 +11,8 @@ _RESERVED = {
     'I_': 'INDICATOR',
     'd_': 'BACKDIFF',
     'dd_': 'BACKDIFF_INCLUSIVE',
+    'AND_': 'INTERSECTION_REDUCE',
+    'OR_': 'UNION_REDUCE',
 }
 
 
@@ -45,7 +47,9 @@ RANGE = Primitive("RANGE")
 ENUM = Primitive("ENUM", is_associative=True)
 INDICATOR = Primitive("INDICATOR")
 UNION = Primitive("UNION", is_associative=True)
+UNION_REDUCE = Primitive("UNION_REDUCE")
 INTERSECTION = Primitive("INTERSECTION", is_associative=True)
+INTERSECTION_REDUCE = Primitive("INTERSECTION_REDUCE")
 NEGATION = Primitive("NEGATION")
 SCATTER = Primitive("SCATTER")
 ASSIGNMENT = Primitive("ASSIGNMENT")
@@ -92,7 +96,9 @@ class MinimalGrammar:
         'CONDITION_GREATER',
         'CONDITION_GREATER_EQUAL',
         'UNION',
+        'UNION_REDUCE',
         'INTERSECTION',
+        'INTERSECTION_REDUCE',
         'NEGATION',
         'SCATTER',
         'LPAREN',
@@ -171,8 +177,10 @@ class MinimalGrammar:
         ('left', 'CONCATENATE'),
         ('right', 'SCATTER'),
         ('right', 'NEGATION'),
-        ('right', 'UNION'),
-        ('right', 'INTERSECTION'),
+        ('left', 'UNION'),
+        ('left', 'INTERSECTION'),
+        ('right', 'UNION_REDUCE'),
+        ('right', 'INTERSECTION_REDUCE'),
         (
             'left',
             'POWER',
@@ -250,9 +258,17 @@ class MinimalGrammar:
         'expression : expression UNION expression'
         p[0] = UNION.bind(p[1], p[3])
 
+    def p_expression_union_reduce(p):
+        'expression : UNION_REDUCE expression'
+        p[0] = UNION_REDUCE.bind(p[2])
+
     def p_expression_intersection(p):
         'expression : expression INTERSECTION expression'
         p[0] = INTERSECTION.bind(p[1], p[3])
+
+    def p_expression_intersection_reduce(p):
+        'expression : INTERSECTION_REDUCE expression'
+        p[0] = INTERSECTION_REDUCE.bind(p[2])
 
     def p_expression_negation(p):
         'expression : NEGATION expression'
@@ -316,7 +332,7 @@ def MinimalGrammarParser(**params):
 def main():
     #expr = '(x+y+z)^^2+(x+y+z)+((x+y+z)^2+(x+y+z))^3.13-5'
     #expr = '(x+y+z)^^2-3 + I_[x=y] + d_[1,4-5](x)'
-    expr = ':::!((I_[x=y] && I_[x=z]) || I_[x>=w]) + {{test; x=1; y=2; z=3}}'
+    expr = ':::!((I_[x=y] && I_[x=z]) || I_[x>=w]) + AND_(I_[x=y] + I_[x=z] + OR_(I_[x=w] + I_[x=v])) + {{test; x=1; y=2; z=3}}'
     lexer = MinimalGrammarLexer()
     parser = MinimalGrammarParser()
     lexer.input(expr)
