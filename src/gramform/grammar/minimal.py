@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Any, Iterable, Mapping, Tuple
+from typing import Any, Iterable, Mapping, Tuple, Type
 
 import ply.lex as lex
 import ply.yacc as yacc
@@ -13,6 +13,8 @@ _RESERVED = {
     'dd_': 'BACKDIFF_INCLUSIVE',
     'AND_': 'INTERSECTION_REDUCE',
     'OR_': 'UNION_REDUCE',
+    'n_': 'FIRST_N',
+    'v_': 'CUMUL_VAR',
 }
 
 
@@ -34,7 +36,51 @@ class Primitive:
         return type(self)(
             name=self.name,
             parameters=tuple(pparams),
+            is_associative=self.is_associative,
         )
+
+    @property
+    def is_terminal(self) -> bool:
+        return False
+
+    def __repr__(self):
+        return wl.pformat(self)
+
+
+@dataclasses.dataclass(frozen=True)
+class Terminal:
+    name: str
+    value: Any = None
+
+    def create(self, *pparams):
+        value = pparams[0]
+        return type(self)(self.name, value)
+
+    @property
+    def is_terminal(self) -> bool:
+        return True
+
+    def __repr__(self):
+        return wl.pformat(self)
+
+
+@dataclasses.dataclass(frozen=True)
+class Literal:
+    value: Any = None
+    dtype: Type | None = None
+
+    def __post_init__(self):
+        if self.dtype is None:
+            object.__setattr__(self, 'dtype', type(self.value))
+
+    @classmethod
+    def create(cls, *pparams):
+        value, dtype = pparams
+        return cls(value=value, dtype=dtype)
+
+    @property
+    def is_terminal(self) -> bool:
+        return True
 
     def __repr__(self):
         return wl.pformat(self)
@@ -52,6 +98,8 @@ INTERSECTION = Primitive("INTERSECTION", is_associative=True)
 INTERSECTION_REDUCE = Primitive("INTERSECTION_REDUCE")
 NEGATION = Primitive("NEGATION")
 SCATTER = Primitive("SCATTER")
+FIRST_N = Primitive("FIRST_N")
+CUMUL_VAR = Primitive("CUMUL_VAR")
 ASSIGNMENT = Primitive("ASSIGNMENT")
 COLLECT_PARAMETERS = Primitive("COLLECT_PARAMETERS")
 CONDITION_EQUAL = Primitive("CONDITION_EQUAL", is_associative=True)
@@ -60,7 +108,7 @@ CONDITION_LESS = Primitive("CONDITION_LESS")
 CONDITION_LESS_EQUAL = Primitive("CONDITION_LESS_EQUAL")
 CONDITION_GREATER = Primitive("CONDITION_GREATER")
 CONDITION_GREATER_EQUAL = Primitive("CONDITION_GREATER_EQUAL")
-VARIABLE = Primitive("VARIABLE")
+VARIABLE = Terminal("VARIABLE")
 
 
 def confound_formula_preprocessor():
@@ -100,6 +148,8 @@ class MinimalGrammar:
         'INTERSECTION',
         'INTERSECTION_REDUCE',
         'NEGATION',
+        'FIRST_N',
+        'CUMUL_VAR',
         'SCATTER',
         'LPAREN',
         'RPAREN',
@@ -175,7 +225,7 @@ class MinimalGrammar:
             'CONDITION_GREATER_EQUAL',
         ),
         ('left', 'CONCATENATE'),
-        ('right', 'SCATTER'),
+        ('right', 'SCATTER', 'CUMUL_VAR', 'FIRST_N'),
         ('right', 'NEGATION'),
         ('left', 'UNION'),
         ('left', 'INTERSECTION'),
@@ -274,6 +324,14 @@ class MinimalGrammar:
         'expression : NEGATION expression'
         p[0] = NEGATION.bind(p[2])
 
+    def p_expression_first_n(p):
+        'expression : FIRST_N parameter'
+        p[0] = FIRST_N.bind(p[2])
+
+    def p_expression_cumul_var(p):
+        'expression : CUMUL_VAR parameter'
+        p[0] = CUMUL_VAR.bind(p[2])
+
     def p_expression_scatter(p):
         'expression : SCATTER expression'
         p[0] = SCATTER.bind(p[2])
@@ -287,8 +345,12 @@ class MinimalGrammar:
         p[0] = p[2]
 
     def p_expression_parameterisation(p):
-        'expression : begin_param expression end_param'
-        p[0] = COLLECT_PARAMETERS.bind(p[2])
+        'parameter : begin_param expression end_param'
+        parameters = p[2]
+        if isinstance(parameters, tuple):
+            p[0] = COLLECT_PARAMETERS.bind(*parameters)
+        else:
+            p[0] = COLLECT_PARAMETERS.bind(parameters)
 
     def p_param_expr(p):
         'expression : expression ARG_SEP expression'
@@ -305,15 +367,15 @@ class MinimalGrammar:
 
     def p_expression_term_variable(p):
         'expression : VARIABLE'
-        p[0] = VARIABLE.bind(p[1])
+        p[0] = VARIABLE.create(p[1])
 
     def p_expression_term_integer(p):
         'expression : INTEGER'
-        p[0] = int(p[1])
+        p[0] = Literal.create(int(p[1]), int)
 
     def p_expression_term_float(p):
         'expression : FLOAT'
-        p[0] = float(p[1])
+        p[0] = Literal.create(float(p[1]), float)
 
     def p_error(p):
         raise ValueError(f"Syntax error: {p}")
@@ -329,10 +391,34 @@ def MinimalGrammarParser(**params):
     return parser
 
 
+def ppr_associative_flatten(tree):
+    def _flatten(children, to_flatten):
+        for child, flatten in zip(children, to_flatten):
+            if flatten:
+                yield from child.parameters
+            else:
+                yield child
+
+    if tree.is_terminal:
+        return tree
+    children = [
+        ppr_associative_flatten(child)
+        for child in tree.parameters
+    ]
+    to_flatten = [
+        getattr(child, 'name', None) == tree.name
+        and tree.is_associative
+        for child in children
+    ]
+    children = tuple(_flatten(children, to_flatten))
+    return tree.bind(*children)
+
+
 def main():
     #expr = '(x+y+z)^^2+(x+y+z)+((x+y+z)^2+(x+y+z))^3.13-5'
     #expr = '(x+y+z)^^2-3 + I_[x=y] + d_[1,4-5](x)'
-    expr = ':::!((I_[x=y] && I_[x=z]) || I_[x>=w]) + AND_(I_[x=y] + I_[x=z] + OR_(I_[x=w] + I_[x=v])) + {{test; x=1; y=2; z=3}}'
+    # expr = ':::!((I_[x=y] && I_[x=z]) || I_[x>=w]) + AND_(I_[x=y] + I_[x=z] + OR_(I_[x=w] + I_[x=v])) + v_{{test; x=1; y=2; z=3}}'
+    expr = 'x+y+z'
     lexer = MinimalGrammarLexer()
     parser = MinimalGrammarParser()
     lexer.input(expr)
@@ -340,6 +426,7 @@ def main():
         print(tok)
     result = parser.parse(expr)
     print(result)
+    print(ppr_associative_flatten(result))
     breakpoint()
 
 
