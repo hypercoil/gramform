@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Any, Tuple
+from typing import Any, Iterable, Mapping, Tuple
 
 import ply.lex as lex
 import ply.yacc as yacc
@@ -29,7 +29,10 @@ class Primitive:
 
     def bind(self, *pparams):
         pparams = pparams or ()
-        return type(self)(name=self.name, parameters=tuple(pparams))
+        return type(self)(
+            name=self.name,
+            parameters=tuple(pparams),
+        )
 
     def __repr__(self):
         return wl.pformat(self)
@@ -45,6 +48,8 @@ UNION = Primitive("UNION", is_associative=True)
 INTERSECTION = Primitive("INTERSECTION", is_associative=True)
 NEGATION = Primitive("NEGATION")
 SCATTER = Primitive("SCATTER")
+ASSIGNMENT = Primitive("ASSIGNMENT")
+COLLECT_PARAMETERS = Primitive("COLLECT_PARAMETERS")
 CONDITION_EQUAL = Primitive("CONDITION_EQUAL", is_associative=True)
 CONDITION_NOT_EQUAL = Primitive("CONDITION_NOT_EQUAL", is_associative=True)
 CONDITION_LESS = Primitive("CONDITION_LESS")
@@ -77,6 +82,8 @@ class MinimalGrammar:
         'BACKDIFF',
         'BACKDIFF_INCLUSIVE',
         'ENUM_SEP',
+        'ARG_SEP',
+        'KV_SEP',
         'INDICATOR',
         'CONDITION_EQUAL',
         'CONDITION_NOT_EQUAL',
@@ -94,16 +101,24 @@ class MinimalGrammar:
         'RBRACKET',
         'LBRACE',
         'RBRACE',
+        'begin_param',
+        'end_param',
         'VARIABLE',
         'FLOAT',
         'INTEGER',
+    )
+
+    states = (
+        ('param', 'exclusive'),
     )
 
     t_CONCATENATE = r'\+'
     t_POWER = r'\^'
     t_POWER_INCLUSIVE = r'\^\^'
     t_RANGE = r'\-'
-    t_ENUM_SEP = r','
+    t_ANY_ENUM_SEP = r','
+    t_param_ARG_SEP = r';'
+    t_param_KV_SEP = r'='
     t_CONDITION_EQUAL = r'='
     t_CONDITION_NOT_EQUAL = r'(<>|!=|~=)'
     t_CONDITION_LESS = r'<'
@@ -120,19 +135,29 @@ class MinimalGrammar:
     t_RBRACKET = r'\]'
     t_LBRACE = r'\{'
     t_RBRACE = r'\}'
-    t_FLOAT = r'\d+\.\d*'
-    t_INTEGER = r'\d+'
-    t_ignore = ' \t'
+    t_ANY_FLOAT = r'\d+\.\d*'
+    t_ANY_INTEGER = r'\d+'
+    t_ANY_ignore = ' \t'
 
-    def t_VARIABLE(t):
+    def t_ANY_VARIABLE(t):
         r'[a-zA-Z_][a-zA-Z0-9_]*'
         if t.value in _RESERVED:
             t.type = _RESERVED[t.value]
         return t
 
-    def t_error(t):
-        raise ValueError(f"Illegal character '{t.value[0]}'")
+    def t_ANY_error(t):
+        raise ValueError(f"Illegal character '{t.value}'")
     
+    def t_begin_param(t):
+        r'\{\{'
+        t.lexer.push_state('param')
+        return t
+
+    def t_param_end_param(t):
+        r'\}\}'
+        t.lexer.pop_state()
+        return t
+
     precedence = (
         (
             'left',
@@ -144,15 +169,25 @@ class MinimalGrammar:
             'CONDITION_GREATER_EQUAL',
         ),
         ('left', 'CONCATENATE'),
+        ('right', 'SCATTER'),
+        ('right', 'NEGATION'),
+        ('right', 'UNION'),
+        ('right', 'INTERSECTION'),
         (
             'left',
             'POWER',
             'POWER_INCLUSIVE',
+        ),
+        (
+            'right',
             'BACKDIFF',
             'BACKDIFF_INCLUSIVE',
         ),
         ('left', 'ENUM_SEP'),
         ('left', 'RANGE'),
+        ('left', 'begin_param', 'end_param'),
+        ('left', 'ARG_SEP'),
+        ('left', 'KV_SEP'),
     )
 
     def p_expression_concatenate(p):
@@ -235,6 +270,23 @@ class MinimalGrammar:
         'parameter : LBRACKET expression RBRACKET'
         p[0] = p[2]
 
+    def p_expression_parameterisation(p):
+        'expression : begin_param expression end_param'
+        p[0] = COLLECT_PARAMETERS.bind(p[2])
+
+    def p_param_expr(p):
+        'expression : expression ARG_SEP expression'
+        left, right = p[1], p[3]
+        if not isinstance(left, Iterable):
+            left = (left,)
+        if not isinstance(right, Iterable):
+            right = (right,)
+        p[0] = tuple(left) + tuple(right)
+
+    def p_param_expr_key_val(p):
+        'expression : expression KV_SEP expression'
+        p[0] = ASSIGNMENT.bind(p[1], p[3])
+
     def p_expression_term_variable(p):
         'expression : VARIABLE'
         p[0] = VARIABLE.bind(p[1])
@@ -264,7 +316,7 @@ def MinimalGrammarParser(**params):
 def main():
     #expr = '(x+y+z)^^2+(x+y+z)+((x+y+z)^2+(x+y+z))^3.13-5'
     #expr = '(x+y+z)^^2-3 + I_[x=y] + d_[1,4-5](x)'
-    expr = ':::!((I_[x=y] && I_[x=z]) || I_[x>=w])'
+    expr = ':::!((I_[x=y] && I_[x=z]) || I_[x>=w]) + {{test; x=1; y=2; z=3}}'
     lexer = MinimalGrammarLexer()
     parser = MinimalGrammarParser()
     lexer.input(expr)
