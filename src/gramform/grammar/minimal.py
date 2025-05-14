@@ -46,6 +46,12 @@ class Primitive:
     def __repr__(self):
         return wl.pformat(self)
 
+    def __eq__(self, other):
+        return self.name == other.name and self.parameters == other.parameters
+
+    def __hash__(self):
+        return hash((self.name, self.parameters))
+
 
 @dataclasses.dataclass(frozen=True)
 class Terminal:
@@ -62,6 +68,12 @@ class Terminal:
 
     def __repr__(self):
         return wl.pformat(self)
+
+    def __eq__(self, other):
+        return self.name == other.name and self.value == other.value
+
+    def __hash__(self):
+        return hash((self.name, self.value))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -84,6 +96,12 @@ class Literal:
 
     def __repr__(self):
         return wl.pformat(self)
+
+    def __eq__(self, other):
+        return self.value == other.value and self.dtype == other.dtype
+
+    def __hash__(self):
+        return hash((self.value, self.dtype))
 
 
 CONCATENATE = Primitive("CONCATENATE", is_associative=True)
@@ -258,7 +276,10 @@ class MinimalGrammar:
 
     def p_expression_power_inclusive(p):
         'expression : expression POWER_INCLUSIVE expression'
-        p[0] = POWER.bind(p[1], RANGE.bind(1, p[3]))
+        p[0] = POWER.bind(p[1], RANGE.bind(
+            Literal.create(1, int),
+            p[3],
+        ))
 
     def p_expression_backdiff(p):
         'expression : BACKDIFF parameter LPAREN expression RPAREN'
@@ -266,7 +287,10 @@ class MinimalGrammar:
 
     def p_expression_backdiff_inclusive(p):
         'expression : BACKDIFF_INCLUSIVE parameter LPAREN expression RPAREN'
-        p[0] = BACKDIFF.bind(p[4], RANGE.bind(0, p[2]))
+        p[0] = BACKDIFF.bind(p[4], RANGE.bind(
+            Literal.create(0, int),
+            p[2],
+        ))
 
     def p_expression_range(p):
         'expression : expression RANGE expression'
@@ -414,11 +438,37 @@ def ppr_associative_flatten(tree):
     return tree.bind(*children)
 
 
+def ppr_common_subexpression(tree):
+    subexpressions = {}
+    # TODO: This is a cache, but it's not used.
+    # We don't use this cache, but it's here in case it simplifies a
+    # future implementation. If not, we should remove it.
+    cache = set()
+
+    def _collect(tree, subexpressions):
+        children = []
+        for child in tree.parameters:
+            if child in subexpressions and not child.is_terminal:
+                children.append(subexpressions[child])
+                cache.add(child)
+            else:
+                if not child.is_terminal:
+                    child, subexpressions = _collect(child, subexpressions)
+                    subexpressions[child] = child
+                children.append(child)
+
+        return tree.bind(*children), subexpressions
+
+    tree, _ = _collect(tree, subexpressions)
+    return tree
+
+
 def main():
-    #expr = '(x+y+z)^^2+(x+y+z)+((x+y+z)^2+(x+y+z))^3.13-5'
-    #expr = '(x+y+z)^^2-3 + I_[x=y] + d_[1,4-5](x)'
+    # expr = '(x+y+z)^^2+(x+y+z)+((x+y+z)^2+(x+y+z))^3.13-5'
+    # expr = '(x+y+z)^^2-3 + I_[x=y] + d_[1,4-5](x)'
     # expr = ':::!((I_[x=y] && I_[x=z]) || I_[x>=w]) + AND_(I_[x=y] + I_[x=z] + OR_(I_[x=w] + I_[x=v])) + v_{{test; x=1; y=2; z=3}}'
-    expr = 'x+y+z'
+    # expr = '(x+y+z)^^2 + (x+y+z)^^2 + (x+y+z)^^2'
+    expr = 'd_[1]((x+y)^^2 + (x+y)^^2) + d_[1]((x+y)^^2 + (x+y)^^2)'
     lexer = MinimalGrammarLexer()
     parser = MinimalGrammarParser()
     lexer.input(expr)
@@ -426,8 +476,9 @@ def main():
         print(tok)
     result = parser.parse(expr)
     print(result)
-    print(ppr_associative_flatten(result))
-    breakpoint()
+    result = ppr_associative_flatten(result)
+    result = ppr_common_subexpression(result)
+    print(result)
 
 
 if __name__ == "__main__":
