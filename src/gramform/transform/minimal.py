@@ -17,15 +17,13 @@ try:
 except ImportError:
     pass
 
-INTERPRETERS = {}
+from gramform.core import init_interpreters
 
-
-def register_interpreter(name):
-    INTERPRETERS[name] = {}
-
-
-def register_operation(interpreter: str, operation: str, impl: callable):
-    INTERPRETERS[interpreter][operation] = impl
+(
+    INTERPRETERS,
+    register_interpreter,
+    register_operation,
+) = init_interpreters()
 
 
 def VARIABLE_impl(node, context):
@@ -112,4 +110,8 @@ register_operation('pl', 'RANGE', RANGE_impl)
 
 
 def main():
-    pass
+    breakpoint()
+
+
+if __name__ == '__main__':
+    main()
