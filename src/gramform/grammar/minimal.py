@@ -1,4 +1,13 @@
+# -*- coding: utf-8 -*-
+# emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
+# vi: set ft=python sts=4 ts=4 sw=4 et:
+"""
+DataFrames
+~~~~~~~~~~
+Grammar for DataFrame operations.
+"""
 import dataclasses
+import re
 from typing import Any, Iterable, Mapping, Tuple, Type
 
 import ply.lex as lex
@@ -19,6 +28,11 @@ _RESERVED = {
 
 
 @dataclasses.dataclass(frozen=True)
+class Grammar:
+    pass
+
+
+@dataclasses.dataclass(frozen=True)
 class Primitive:
     name: str
     parameters: Tuple[Any, ...] = dataclasses.field(
@@ -26,6 +40,7 @@ class Primitive:
     )
     # Used for operator flattening when postprocessing the tree.
     is_associative: bool = False
+    is_terminal: bool = dataclasses.field(default=False, repr=False)
 
     def __post_init__(self):
         # Wasteful to do this every time we bind.
@@ -37,11 +52,8 @@ class Primitive:
             name=self.name,
             parameters=tuple(pparams),
             is_associative=self.is_associative,
+            is_terminal=self.is_terminal,
         )
-
-    @property
-    def is_terminal(self) -> bool:
-        return False
 
     def __repr__(self):
         return wl.pformat(self)
@@ -52,28 +64,8 @@ class Primitive:
     def __hash__(self):
         return hash((self.name, self.parameters))
 
-
-@dataclasses.dataclass(frozen=True)
-class Terminal:
-    name: str
-    value: Any = None
-
-    def create(self, *pparams):
-        value = pparams[0]
-        return type(self)(self.name, value)
-
-    @property
-    def is_terminal(self) -> bool:
-        return True
-
-    def __repr__(self):
-        return wl.pformat(self)
-
-    def __eq__(self, other):
-        return self.name == other.name and self.value == other.value
-
-    def __hash__(self):
-        return hash((self.name, self.value))
+    def __call__(self, context):
+        return context.interpreter[self.name](self, context).eval
 
 
 @dataclasses.dataclass(frozen=True)
@@ -104,6 +96,86 @@ class Literal:
         return hash((self.value, self.dtype))
 
 
+@dataclasses.dataclass(frozen=True)
+class ExecutionContext:
+    interpreter: Mapping[str, callable]
+    data: Any #pd.DataFrame
+    selection: tuple[str, ...] = dataclasses.field(default_factory=tuple)
+    eval: Any = None
+
+    def read(self, *pparams):
+        return tuple(getattr(self, key) for key in pparams)
+
+    def write(self, *pparams, **params):
+        if pparams:
+            if len(pparams) != 2:
+                raise ValueError(
+                    "Positional parameters to context.write must be a key "
+                    f"and value: {pparams}"
+                )
+            key, value = pparams
+            params = {
+                **{key: value},
+                **params,
+            }
+        return dataclasses.replace(self, **params)
+
+    def pop(self, *pparams):
+        return (
+            self.read(*pparams),
+            dataclasses.replace(self, **{key: None for key in pparams}),
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class Processor:
+    grammar: Grammar
+    preprocessors: Tuple[Mapping[str, str] | callable, ...]
+    postprocessors: Tuple[callable, ...]
+    interpreters: Mapping[str, Mapping[str, callable]]
+
+    def __post_init__(self):
+        postprocessors = self.postprocessors
+        if ppr_execution_head not in postprocessors:
+            postprocessors = list(postprocessors) + [ppr_execution_head]
+        object.__setattr__(self, 'postprocessors', tuple(postprocessors))
+
+    def _preprocess(self, expr: str) -> str:
+        for preprocessor in self.preprocessors:
+            if isinstance(preprocessor, Mapping):
+                expr = re.sub(
+                    rf'\b({"|".join(re.escape(key) for key in preprocessor)})',
+                    lambda m: preprocessor[m.group(0)],
+                    expr,
+                )
+            else:
+                expr = preprocessor(expr)
+        return expr
+
+    def _parse(self, expr: str) -> Primitive:
+        parser = self.grammar.__parser__()
+        return parser.parse(expr)
+
+    def _postprocess(self, expr: Primitive) -> Primitive:
+        for postprocessor in self.postprocessors:
+            expr = postprocessor(expr)
+        return expr
+
+    def process(self, expr: str) -> Primitive:
+        expr = self._preprocess(expr)
+        expr = self._parse(expr)
+        expr = self._postprocess(expr)
+        return expr
+
+    def __call__(self, expr: str, **params) -> Primitive:
+        ast = self.process(expr)
+        if 'context' in params:
+            context = params['context']
+        else:
+            context = ExecutionContext(**params)
+        return ast(context)
+
+
 CONCATENATE = Primitive("CONCATENATE", is_associative=True)
 POWER = Primitive("POWER")
 BACKDIFF = Primitive("BACKDIFF")
@@ -126,7 +198,8 @@ CONDITION_LESS = Primitive("CONDITION_LESS")
 CONDITION_LESS_EQUAL = Primitive("CONDITION_LESS_EQUAL")
 CONDITION_GREATER = Primitive("CONDITION_GREATER")
 CONDITION_GREATER_EQUAL = Primitive("CONDITION_GREATER_EQUAL")
-VARIABLE = Terminal("VARIABLE")
+VARIABLE = Primitive("VARIABLE", is_terminal=True)
+EXECUTION_HEAD = Primitive("EXECUTION_HEAD")
 
 
 def confound_formula_preprocessor():
@@ -391,7 +464,7 @@ class MinimalGrammar:
 
     def p_expression_term_variable(p):
         'expression : VARIABLE'
-        p[0] = VARIABLE.create(p[1])
+        p[0] = VARIABLE.bind(p[1])
 
     def p_expression_term_integer(p):
         'expression : INTEGER'
@@ -403,6 +476,12 @@ class MinimalGrammar:
 
     def p_error(p):
         raise ValueError(f"Syntax error: {p}")
+
+    def __lexer__(self, **params):
+        return lex.lex(module=self, **params)
+
+    def __parser__(self, **params):
+        return yacc.yacc(module=self, **params)
 
 
 def MinimalGrammarLexer(**params):
@@ -463,6 +542,12 @@ def ppr_common_subexpression(tree):
     return tree
 
 
+def ppr_execution_head(tree):
+    if tree.name != 'EXECUTION_HEAD':
+        tree = EXECUTION_HEAD.bind(tree)
+    return tree
+
+
 def main():
     # expr = '(x+y+z)^^2+(x+y+z)+((x+y+z)^2+(x+y+z))^3.13-5'
     # expr = '(x+y+z)^^2-3 + I_[x=y] + d_[1,4-5](x)'
@@ -478,6 +563,7 @@ def main():
     print(result)
     result = ppr_associative_flatten(result)
     result = ppr_common_subexpression(result)
+    result = ppr_execution_head(result)
     print(result)
 
 
