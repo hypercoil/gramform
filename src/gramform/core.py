@@ -7,9 +7,12 @@
 Core components of the `gramform` library for building simple DSLs.
 """
 import dataclasses
+import inspect
 import re
 from typing import Any, Mapping, Tuple, Type
 
+import ply.lex as lex
+import ply.yacc as yacc
 import wadler_lindig as wl
 
 
@@ -18,7 +21,15 @@ class Grammar:
     """Subclass this and follow the `ply` tutorial
     (https://www.dabeaz.com/ply/ply.html)
     to create a new grammar."""
-    pass
+
+    @classmethod
+    def __lexer__(cls, **params):
+        return lex.lex(module=cls, **params)
+
+    @classmethod
+    def __parser__(cls, **params):
+        lexer = lex.lex(module=cls, **params)
+        return yacc.yacc(module=cls, **params)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,7 +61,7 @@ class Primitive:
         return hash((self.name, self.parameters))
 
     def __call__(self, context):
-        return context.interpreter[self.name](self, context).eval
+        return context.interpreter[self.name](self, context)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -80,12 +91,13 @@ class Literal:
     def __hash__(self):
         return hash((self.value, self.dtype))
 
+    def __call__(self, context):
+        context = context.write(eval=self.value)
+        return context
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class ExecutionContext:
     interpreter: Mapping[str, callable]
-    data: Any #pd.DataFrame
-    selection: tuple[str, ...] = dataclasses.field(default_factory=tuple)
     eval: Any = None
 
     def read(self, *pparams):
@@ -108,22 +120,44 @@ class ExecutionContext:
     def pop(self, *pparams):
         return (
             self.read(*pparams),
-            dataclasses.replace(self, **{key: None for key in pparams}),
+            dataclasses.replace(
+                self,
+                **{
+                    key: (
+                        inspect.signature(self.__init__).parameters[key].default
+                        if key in self.__dict__
+                        else None
+                    )
+                    for key in pparams
+                },
+            ),
         )
+
+    def __repr__(self):
+        return wl.pformat(self)
+
+    @classmethod
+    def eval_head(self) -> str | None:
+        return None
 
 
 @dataclasses.dataclass(frozen=True)
 class Processor:
-    grammar: Grammar
+    grammar: Type[Grammar]
     preprocessors: Tuple[Mapping[str, str] | callable, ...]
     postprocessors: Tuple[callable, ...]
     interpreters: Mapping[str, Mapping[str, callable]]
+    execution_context: Type[ExecutionContext]
+    default_interpreter: str | None = None
 
     def __post_init__(self):
         postprocessors = self.postprocessors
         if ppr_execution_head not in postprocessors:
             postprocessors = list(postprocessors) + [ppr_execution_head]
         object.__setattr__(self, 'postprocessors', tuple(postprocessors))
+
+    def __repr__(self):
+        return wl.pformat(self)
 
     def _preprocess(self, expr: str) -> str:
         for preprocessor in self.preprocessors:
@@ -155,13 +189,36 @@ class Processor:
     def __call__(self, expr: str, **params) -> Primitive:
         ast = self.process(expr)
         if 'context' in params:
-            context = params['context']
+            context = params.pop('context')
         else:
-            context = ExecutionContext(**params)
-        return ast(context)
-
-
-EXECUTION_HEAD = Primitive('EXECUTION_HEAD')
+            eval_head = self.execution_context.eval_head()
+            eval_head = (
+                {'eval': params.pop(eval_head, None)}
+                if eval_head is not None
+                else {}
+            )
+            interpreter = params.pop(
+                'interpreter',
+                self.default_interpreter,
+            )
+            orig_params = tuple(params.keys())
+            parameter_names = inspect.signature(
+                self.execution_context
+            ).parameters
+            context_params = {
+                e: params.pop(e)
+                for e in orig_params
+                if e in parameter_names
+            }
+            context = self.execution_context(
+                **context_params,
+                **eval_head,
+                interpreter=self.interpreters[interpreter],
+            )
+        result = ast(context, **params)
+        if result.eval is not None:
+            result = result.eval
+        return result
 
 
 def ppr_execution_head(tree):
@@ -182,3 +239,6 @@ def init_interpreters():
         INTERPRETERS[interpreter][operation] = impl
 
     return INTERPRETERS, register_interpreter, register_operation
+
+
+EXECUTION_HEAD = Primitive('EXECUTION_HEAD')

@@ -7,6 +7,7 @@ DataFrames
 Transformations for DataFrame operations.
 """
 import dataclasses
+import os
 from typing import Any, Mapping
 try:
     import pandas as pd
@@ -17,7 +18,15 @@ try:
 except ImportError:
     pass
 
-from gramform.core import init_interpreters
+from gramform.core import init_interpreters, ExecutionContext, Processor
+from gramform.grammar.minimal import (
+    MinimalGrammar,
+    confound_formula_preprocessor,
+)
+from gramform.postprocessors import (
+    ppr_associative_flatten,
+    ppr_common_subexpression,
+)
 
 (
     INTERPRETERS,
@@ -51,10 +60,11 @@ def RANGE_impl(node, context):
 
 
 def CONCATENATE_impl(node, context):
+    (selection,), context = context.pop('select')
     for child in node.parameters:
-        context = child(context)
-    # This is actually a no-op, because all children have already been
-    # written to the selection buffer by the time we get here.
+        (new_selection,), context = child(context).pop('select')
+        selection.extend(new_selection)
+    context = context.write(select=selection)
     return context
 
 
@@ -67,25 +77,29 @@ def POWER_impl(node, context):
     if pow_cols:
         raise ValueError("Power operation does not support column selection")
     new_selection = []
+    arg = data[selection]
     for pow in pow_order:
-        new_selection.append(f'{selection}_power{pow}')
-        data[new_selection[-1]] = data[selection] ** pow
+        if pow == 1:
+            new_selection.extend(selection)
+            continue
+        new_columns = [f'{e}_power{pow}' for e in selection]
+        data[new_columns] = arg ** pow
+        new_selection.extend(new_columns)
     context = context.write(data=data, select=new_selection)
     return context
 
 
 def EXEC_impl(node, context):
-    exec_mode, interpreter, expr = node.parameters
+    tree, = node.parameters
+    (exec_mode,), context = context.pop('eval')
     (input,), context = context.pop('data')
-    if exec_mode == 'file':
-        data = pd.read_csv(input)
-    elif exec_mode == 'df':
+    if exec_mode == 'df' or isinstance(input, pd.DataFrame):
         data = input
+    elif exec_mode == 'file' or os.path.isfile(input):
+        data = pd.read_csv(input)
     else:
         raise ValueError(f"Invalid exec mode: {exec_mode}")
-    interpreter = INTERPRETERS[interpreter]
-    context = context.write(data=data, interpreter=interpreter)
-    tree = node.parameters[0]
+    context = context.write(data=data)
     context = tree(context)
     if context.eval:
         result, context = context.pop('eval')
@@ -93,6 +107,16 @@ def EXEC_impl(node, context):
         (data, selection), context = context.pop('data', 'select')
         result = data[selection]
     return context.write(eval=result)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, repr=False)
+class DataFrameContext(ExecutionContext):
+    data: pd.DataFrame
+    select: list[str] = dataclasses.field(default_factory=list)
+
+    @classmethod
+    def eval_head(self) -> str | None:
+        return 'exec_mode'
 
 
 register_interpreter('pd')
@@ -107,9 +131,30 @@ register_operation('pd', 'LITERAL', LITERAL_impl)
 register_operation('pl', 'LITERAL', LITERAL_impl)
 register_operation('pd', 'RANGE', RANGE_impl)
 register_operation('pl', 'RANGE', RANGE_impl)
+register_operation('pd', 'EXECUTION_HEAD', EXEC_impl)
+register_operation('pl', 'EXECUTION_HEAD', EXEC_impl)
 
 
 def main():
+    processor = Processor(
+        grammar=MinimalGrammar,
+        preprocessors=(confound_formula_preprocessor(),),
+        postprocessors=(
+            ppr_associative_flatten,
+            ppr_common_subexpression,
+        ),
+        interpreters=INTERPRETERS,
+        execution_context=DataFrameContext,
+        default_interpreter='pd',
+    )
+    result = processor.process('d_[1]((x+y)^^2 + (x+y)^^2)')
+    result = processor(
+        '((x+y)^^2 + (x+y)^^2)',
+        data=pd.DataFrame(
+            {'x': [1, 2, 3], 'y': [4, 5, 6]},
+            index=[1, 2, 3],
+        ),
+    )
     breakpoint()
 
 

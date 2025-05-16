@@ -12,7 +12,7 @@ import ply.lex as lex
 import ply.yacc as yacc
 import wadler_lindig as wl
 
-from gramform.core import Primitive, Literal, ppr_execution_head
+from gramform.core import Grammar, Primitive, Literal
 
 
 PRIMITIVES = {}
@@ -66,7 +66,7 @@ def confound_formula_preprocessor():
     }
 
 
-class MinimalGrammar:
+class MinimalGrammar(Grammar):
     tokens = (
         'CONCATENATE',
         'POWER',
@@ -327,12 +327,6 @@ class MinimalGrammar:
     def p_error(p):
         raise ValueError(f"Syntax error: {p}")
 
-    def __lexer__(self, **params):
-        return lex.lex(module=self, **params)
-
-    def __parser__(self, **params):
-        return yacc.yacc(module=self, **params)
-
 
 def MinimalGrammarLexer(**params):
     lexer = lex.lex(module=MinimalGrammar, **params)
@@ -344,55 +338,12 @@ def MinimalGrammarParser(**params):
     return parser
 
 
-def ppr_associative_flatten(tree):
-    def _flatten(children, to_flatten):
-        for child, flatten in zip(children, to_flatten):
-            if flatten:
-                yield from child.parameters
-            else:
-                yield child
-
-    if tree.is_terminal:
-        return tree
-    children = [
-        ppr_associative_flatten(child)
-        for child in tree.parameters
-    ]
-    to_flatten = [
-        getattr(child, 'name', None) == tree.name
-        and tree.is_associative
-        for child in children
-    ]
-    children = tuple(_flatten(children, to_flatten))
-    return tree.bind(*children)
-
-
-def ppr_common_subexpression(tree):
-    subexpressions = {}
-    # TODO: This is a cache, but it's not used.
-    # We don't use this cache, but it's here in case it simplifies a
-    # future implementation. If not, we should remove it.
-    cache = set()
-
-    def _collect(tree, subexpressions):
-        children = []
-        for child in tree.parameters:
-            if child in subexpressions and not child.is_terminal:
-                children.append(subexpressions[child])
-                cache.add(child)
-            else:
-                if not child.is_terminal:
-                    child, subexpressions = _collect(child, subexpressions)
-                    subexpressions[child] = child
-                children.append(child)
-
-        return tree.bind(*children), subexpressions
-
-    tree, _ = _collect(tree, subexpressions)
-    return tree
-
-
 def main():
+    from gramform.core import ppr_execution_head
+    from gramform.postprocessors import (
+        ppr_associative_flatten,
+        ppr_common_subexpression,
+    )
     # expr = '(x+y+z)^^2+(x+y+z)+((x+y+z)^2+(x+y+z))^3.13-5'
     # expr = '(x+y+z)^^2-3 + I_[x=y] + d_[1,4-5](x)'
     # expr = ':::!((I_[x=y] && I_[x=z]) || I_[x>=w]) + AND_(I_[x=y] + I_[x=z] + OR_(I_[x=w] + I_[x=v])) + v_{{test; x=1; y=2; z=3}}'
