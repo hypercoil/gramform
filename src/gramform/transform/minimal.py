@@ -8,7 +8,7 @@ Transformations for DataFrame operations.
 """
 import dataclasses
 import os
-from typing import Any, Mapping
+from typing import Any, Mapping, Iterable
 try:
     import pandas as pd
 except ImportError:
@@ -78,6 +78,8 @@ def POWER_impl(node, context):
         raise ValueError("Power operation does not support column selection")
     new_selection = []
     arg = data[selection]
+    if not isinstance(pow_order, Iterable):
+        pow_order = (pow_order,)
     for pow in pow_order:
         if pow == 1:
             new_selection.extend(selection)
@@ -113,6 +115,11 @@ def EXEC_impl(node, context):
 class DataFrameContext(ExecutionContext):
     data: pd.DataFrame
     select: list[str] = dataclasses.field(default_factory=list)
+    cache_vars: Mapping[str, callable] = dataclasses.field(
+        default_factory=lambda: {
+            'select': lambda in_context, in_cache: in_cache
+        }
+    )
 
     @classmethod
     def eval_head(self) -> str | None:

@@ -6,9 +6,17 @@ Postprocessors
 ~~~~~~~~~~~~~~
 Postprocessors are used to transform the tree after it has been parsed.
 """
+from typing import Tuple
+from .core import (
+    Primitive,
+    TransformationContext,
+)
 
 
-def ppr_associative_flatten(tree):
+def ppr_associative_flatten(
+    tree: Primitive,
+    context: TransformationContext,
+) -> Tuple[Primitive, TransformationContext]:
     def _flatten(children, to_flatten):
         for child, flatten in zip(children, to_flatten):
             if flatten:
@@ -17,9 +25,9 @@ def ppr_associative_flatten(tree):
                 yield child
 
     if tree.is_terminal:
-        return tree
+        return tree, context
     children = [
-        ppr_associative_flatten(child)
+        ppr_associative_flatten(child, context)[0]
         for child in tree.parameters
     ]
     to_flatten = [
@@ -28,10 +36,13 @@ def ppr_associative_flatten(tree):
         for child in children
     ]
     children = tuple(_flatten(children, to_flatten))
-    return tree.bind(*children)
+    return tree.bind(*children), context
 
 
-def ppr_common_subexpression(tree):
+def ppr_common_subexpression(
+    tree: Primitive,
+    context: TransformationContext,
+) -> Tuple[Primitive, TransformationContext]:
     subexpressions = {}
     # TODO: This is a cache, but it's not used.
     # We don't use this cache, but it's here in case it simplifies a
@@ -53,4 +64,6 @@ def ppr_common_subexpression(tree):
         return tree.bind(*children), subexpressions
 
     tree, _ = _collect(tree, subexpressions)
-    return tree
+    for prim in cache:
+        context = context.prepare_cache(prim)
+    return tree, context

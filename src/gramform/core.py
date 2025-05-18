@@ -61,7 +61,31 @@ class Primitive:
         return hash((self.name, self.parameters))
 
     def __call__(self, context):
-        return context.interpreter[self.name](self, context)
+        cache_hit = context.cache.get(self, NotInCache())
+        match cache_hit:
+            case NotInCache():
+                result = context.interpreter[self.name](self, context)
+            case NotEvaluated():
+                result = context.interpreter[self.name](self, context)
+                result = result.write(
+                    cache={
+                        **context.cache,
+                        self: {
+                            k: v
+                            for k, v in zip(
+                                result.cache_vars,
+                                result.read(*tuple(result.cache_vars.keys())),
+                            )
+                        },
+                    }
+                )
+            case _:  # Cache hit
+                update = {
+                    var: combine(context.read(var)[0], cache_hit[var])
+                    for var, combine in context.cache_vars.items()
+                }
+                result = context.write(**update)
+        return result
 
 
 @dataclasses.dataclass(frozen=True)
@@ -95,10 +119,39 @@ class Literal:
         context = context.write(eval=self.value)
         return context
 
+
+@dataclasses.dataclass(frozen=True)
+class NotEvaluated:
+    """Sentinel value for unevaluated primitives."""
+    pass
+
+
+@dataclasses.dataclass(frozen=True)
+class NotInCache:
+    """Sentinel value for primitives not in the cache."""
+    pass
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class TransformationContext:
+    cache: Mapping[Primitive, Any] = dataclasses.field(default_factory=dict)
+
+    def prepare_cache(self, primitive: Primitive):
+        self.cache[primitive] = NotEvaluated()
+        return self
+
+    def get_cache(self, primitive: Primitive):
+        return self.cache.get(primitive, NotInCache())
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class ExecutionContext:
     interpreter: Mapping[str, callable]
     eval: Any = None
+    cache: Mapping[Primitive, Any] = dataclasses.field(default_factory=dict)
+    cache_vars: Mapping[str, callable] = dataclasses.field(
+        default_factory=dict
+    )
 
     def read(self, *pparams):
         return tuple(getattr(self, key) for key in pparams)
@@ -124,7 +177,9 @@ class ExecutionContext:
                 self,
                 **{
                     key: (
-                        inspect.signature(self.__init__).parameters[key].default
+                        inspect.signature(
+                            self.__init__
+                        ).parameters[key].default
                         if key in self.__dict__
                         else None
                     )
@@ -175,19 +230,24 @@ class Processor:
         parser = self.grammar.__parser__()
         return parser.parse(expr)
 
-    def _postprocess(self, expr: Primitive) -> Primitive:
+    def _postprocess(
+        self,
+        expr: Primitive,
+        context: TransformationContext,
+    ) -> Tuple[Primitive, TransformationContext]:
         for postprocessor in self.postprocessors:
-            expr = postprocessor(expr)
-        return expr
+            expr, context = postprocessor(expr, context)
+        return expr, context
 
-    def process(self, expr: str) -> Primitive:
+    def process(self, expr: str) -> Tuple[Primitive, TransformationContext]:
         expr = self._preprocess(expr)
         expr = self._parse(expr)
-        expr = self._postprocess(expr)
-        return expr
+        context = TransformationContext()
+        expr, context = self._postprocess(expr, context)
+        return expr, context
 
     def __call__(self, expr: str, **params) -> Primitive:
-        ast = self.process(expr)
+        ast, t_context = self.process(expr)
         if 'context' in params:
             context = params.pop('context')
         else:
@@ -215,16 +275,24 @@ class Processor:
                 **eval_head,
                 interpreter=self.interpreters[interpreter],
             )
+        context = context.write(**{
+            k: v
+            for k, v in t_context.__dict__.items()
+            if k not in context_params
+        })
         result = ast(context, **params)
         if result.eval is not None:
             result = result.eval
         return result
 
 
-def ppr_execution_head(tree):
+def ppr_execution_head(
+    tree: Primitive,
+    context: TransformationContext,
+) -> Tuple[Primitive, TransformationContext]:
     if tree.name != 'EXECUTION_HEAD':
         tree = EXECUTION_HEAD.bind(tree)
-    return tree
+    return tree, context
 
 
 def init_interpreters():

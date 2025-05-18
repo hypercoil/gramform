@@ -12,7 +12,7 @@ import ply.lex as lex
 import ply.yacc as yacc
 import wadler_lindig as wl
 
-from gramform.core import Grammar, Primitive, Literal
+from gramform.core import Grammar, Primitive, Literal, TransformationContext
 
 
 PRIMITIVES = {}
@@ -356,10 +356,12 @@ def main():
         print(tok)
     result = parser.parse(expr)
     print(result)
-    result = ppr_associative_flatten(result)
-    result = ppr_common_subexpression(result)
-    result = ppr_execution_head(result)
+    context = TransformationContext()
+    result, context = ppr_associative_flatten(result, context)
+    result, context = ppr_common_subexpression(result, context)
+    result, context = ppr_execution_head(result, context)
     print(result)
+    breakpoint()
 
 
 if __name__ == "__main__":
