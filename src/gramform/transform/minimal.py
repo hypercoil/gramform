@@ -18,7 +18,7 @@ try:
 except ImportError:
     pass
 
-from gramform.core import init_interpreters, ExecutionContext, Processor
+from gramform.core import ExecutionContext, InterpretersDispatch, Processor
 from gramform.grammar.minimal import (
     MinimalGrammar,
     confound_formula_preprocessor,
@@ -28,11 +28,7 @@ from gramform.postprocessors import (
     ppr_common_subexpression,
 )
 
-(
-    INTERPRETERS,
-    register_interpreter,
-    register_operation,
-) = init_interpreters()
+INTERPRETERS = InterpretersDispatch()
 
 
 def VARIABLE_impl(node, context):
@@ -126,20 +122,14 @@ class DataFrameContext(ExecutionContext):
         return 'exec_mode'
 
 
-register_interpreter('pd')
-register_interpreter('pl')
-register_operation('pd', 'CONCATENATE', CONCATENATE_impl)
-register_operation('pl', 'CONCATENATE', CONCATENATE_impl)
-register_operation('pd', 'POWER', POWER_impl)
-register_operation('pl', 'POWER', POWER_impl)
-register_operation('pd', 'VARIABLE', VARIABLE_impl)
-register_operation('pl', 'VARIABLE', VARIABLE_impl)
-register_operation('pd', 'LITERAL', LITERAL_impl)
-register_operation('pl', 'LITERAL', LITERAL_impl)
-register_operation('pd', 'RANGE', RANGE_impl)
-register_operation('pl', 'RANGE', RANGE_impl)
-register_operation('pd', 'EXECUTION_HEAD', EXEC_impl)
-register_operation('pl', 'EXECUTION_HEAD', EXEC_impl)
+INTERPRETERS.register_interpreter('pd')
+INTERPRETERS.register_interpreter('pl')
+INTERPRETERS.register_operation('__all__', 'CONCATENATE', CONCATENATE_impl)
+INTERPRETERS.register_operation('__all__', 'POWER', POWER_impl)
+INTERPRETERS.register_operation('__all__', 'VARIABLE', VARIABLE_impl)
+INTERPRETERS.register_operation('__all__', 'LITERAL', LITERAL_impl)
+INTERPRETERS.register_operation('__all__', 'RANGE', RANGE_impl)
+INTERPRETERS.register_operation('__all__', 'EXECUTION_HEAD', EXEC_impl)
 
 
 def main():

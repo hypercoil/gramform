@@ -196,12 +196,57 @@ class ExecutionContext:
         return None
 
 
+# It's not really frozen when we keep changing the mutable fields, is it?
+@dataclasses.dataclass(frozen=True)
+class InterpretersDispatch:
+    interpreters: Mapping[str, Mapping[str, callable]] = dataclasses.field(
+        default_factory=dict
+    )
+    groups: Mapping[str, Tuple[str, ...]] = dataclasses.field(
+        default_factory=dict
+    )
+
+    def __post_init__(self):
+        self.groups['__all__'] = tuple(self.interpreters.keys())
+
+    def register_interpreter(self, name: str):
+        self.interpreters[name] = {}
+        self.groups['__all__'] = tuple(self.interpreters.keys())
+
+    def register_operation(
+        self,
+        interpreter: str,
+        operation: str,
+        impl: callable,
+    ):
+        if interpreter in self.groups:
+            for _interpreter in self.groups[interpreter]:
+                self.interpreters[_interpreter][operation] = impl
+        else:
+            self.interpreters[interpreter][operation] = impl
+
+    def register_group(self, name: str, interpreters: Tuple[str, ...]):
+        self.groups[name] = interpreters
+
+    def __getitem__(self, key: str) -> Mapping[str, callable]:
+        return self.interpreters[key]
+
+    def __iter__(self):
+        return iter(self.interpreters)
+
+    def __len__(self):
+        return len(self.interpreters)
+
+    def __repr__(self):
+        return wl.pformat(self)
+
+
 @dataclasses.dataclass(frozen=True)
 class Processor:
     grammar: Type[Grammar]
     preprocessors: Tuple[Mapping[str, str] | callable, ...]
     postprocessors: Tuple[callable, ...]
-    interpreters: Mapping[str, Mapping[str, callable]]
+    interpreters: InterpretersDispatch
     execution_context: Type[ExecutionContext]
     default_interpreter: str | None = None
 
@@ -293,20 +338,6 @@ def ppr_execution_head(
     if tree.name != 'EXECUTION_HEAD':
         tree = EXECUTION_HEAD.bind(tree)
     return tree, context
-
-
-def init_interpreters():
-    # TODO: This closure is gonna bite us in the ass if we want to support
-    # parallel execution of grammars.
-    INTERPRETERS = {}
-
-    def register_interpreter(name):
-        INTERPRETERS[name] = {}
-
-    def register_operation(interpreter: str, operation: str, impl: callable):
-        INTERPRETERS[interpreter][operation] = impl
-
-    return INTERPRETERS, register_interpreter, register_operation
 
 
 EXECUTION_HEAD = Primitive('EXECUTION_HEAD')
