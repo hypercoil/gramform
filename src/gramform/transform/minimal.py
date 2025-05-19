@@ -8,6 +8,7 @@ Transformations for DataFrame operations.
 """
 import dataclasses
 import os
+from itertools import chain
 from typing import Any, Mapping, Iterable
 try:
     import pandas as pd
@@ -51,7 +52,18 @@ def RANGE_impl(node, context):
     start, end = node.parameters
     (start,), context = start(context).pop('eval')
     (end,), context = end(context).pop('eval')
-    context = context.write('eval', tuple(range(start, end + 1)))
+    context = context.write('eval', range(start, end + 1))
+    return context
+
+
+def ENUM_impl(node, context):
+    eval = []
+    for child in node.parameters:
+        (new_eval,), context = child(context).pop('eval')
+        if not isinstance(new_eval, Iterable):
+            new_eval = (new_eval,)
+        eval.extend(new_eval)
+    context = context.write(eval=chain(eval))
     return context
 
 
@@ -81,7 +93,36 @@ def POWER_impl(node, context):
             new_selection.extend(selection)
             continue
         new_columns = [f'{e}_power{pow}' for e in selection]
-        data[new_columns] = arg ** pow
+        data[new_columns] = (arg ** pow).to_numpy()
+        new_selection.extend(new_columns)
+    context = context.write(data=data, select=new_selection)
+    return context
+
+
+def BACKDIFF_impl(node, context):
+    argument, order = node.parameters
+    context = argument(context)
+    (data, selection), context = context.pop('data', 'select')
+    context = order(context)
+    (order, order_cols), context = context.pop('eval', 'select')
+    if order_cols:
+        raise ValueError("Backdiff operation does not support column selection")
+    new_selection, result = [], {}
+    arg = data[selection]
+    if not isinstance(order, Iterable):
+        order = (order,)
+    required_orders = set(order)
+    max_order = max(tuple(order))
+    for ord in range(max_order + 1):
+        arg = arg.diff()
+        if ord in required_orders:
+            result[ord] = arg
+    for ord in order:
+        if ord == 0:
+            new_selection.extend(selection)
+            continue
+        new_columns = [f'{c}_derivative{ord}' for c in selection]
+        data[new_columns] = result[ord].to_numpy()
         new_selection.extend(new_columns)
     context = context.write(data=data, select=new_selection)
     return context
@@ -126,9 +167,11 @@ INTERPRETERS.register_interpreter('pd')
 INTERPRETERS.register_interpreter('pl')
 INTERPRETERS.register_operation('__all__', 'CONCATENATE', CONCATENATE_impl)
 INTERPRETERS.register_operation('__all__', 'POWER', POWER_impl)
+INTERPRETERS.register_operation('__all__', 'BACKDIFF', BACKDIFF_impl)
 INTERPRETERS.register_operation('__all__', 'VARIABLE', VARIABLE_impl)
 INTERPRETERS.register_operation('__all__', 'LITERAL', LITERAL_impl)
 INTERPRETERS.register_operation('__all__', 'RANGE', RANGE_impl)
+INTERPRETERS.register_operation('__all__', 'ENUM', ENUM_impl)
 INTERPRETERS.register_operation('__all__', 'EXECUTION_HEAD', EXEC_impl)
 
 
@@ -146,7 +189,7 @@ def main():
     )
     result = processor.process('d_[1]((x+y)^^2 + (x+y)^^2)')
     result = processor(
-        '((x+y)^^2 + (x+y)^^2)',
+        'dd_[3]((x+y)^2,4-5 + (x+y)^2,4-5)',
         data=pd.DataFrame(
             {'x': [1, 2, 3], 'y': [4, 5, 6]},
             index=[1, 2, 3],
