@@ -7,9 +7,12 @@ DataFrames
 Transformations for DataFrame operations.
 """
 import dataclasses
+import operator
 import os
 from itertools import chain
-from typing import Any, Mapping, Iterable
+from typing import Any, Mapping, Iterable, Literal, Sequence
+
+import numpy as np
 try:
     import pandas as pd
 except ImportError:
@@ -18,8 +21,13 @@ try:
     import polars as pl
 except ImportError:
     pass
+import wadler_lindig as wl
 
-from gramform.core import ExecutionContext, InterpretersDispatch, Processor
+from gramform.core import (
+    ExecutionContext,
+    InterpretersDispatch,
+    Processor,
+)
 from gramform.grammar.minimal import (
     MinimalGrammar,
     confound_formula_preprocessor,
@@ -128,6 +136,123 @@ def BACKDIFF_impl(node, context):
     return context
 
 
+def BINOP_impl(node, context, op: callable, col_infix: str):
+    left, right = node.parameters
+    context = left(context)
+    (left_selection, left_eval), context = context.pop('select', 'eval')
+    context = right(context)
+    (right_selection, right_eval), context = context.pop('select', 'eval')
+    (data,) = context.read('data')
+    if left_selection is not None:
+        left_arg = data[left_selection]
+        left_cols = left_selection
+    else:
+        left_arg = left_eval
+        left_cols = [f'{left_eval}']
+    if right_selection is not None:
+        right_arg = data[right_selection]
+        right_cols = right_selection
+    else:
+        right_arg = right_eval
+        right_cols = [f'{right_eval}']
+    result = op(left_arg.to_numpy(), right_arg.to_numpy())
+    new_columns = [
+        f"{lcol}_{col_infix}_{rcol}"
+        for lcol in left_cols
+        for rcol in right_cols
+    ]
+    data[new_columns] = pd.DataFrame(result, index=data.index)
+    if data.isnull().any().any():
+        raise ValueError("Result of binary operation contains NaN")
+    return context.write(data=data, select=new_columns)
+
+
+def CONDITION_EQUAL_impl(node, context):
+    return BINOP_impl(node, context, operator.eq, 'eq')
+
+
+def CONDITION_NOT_EQUAL_impl(node, context):
+    return BINOP_impl(node, context, operator.ne, 'ne')
+
+
+def CONDITION_GREATER_impl(node, context):
+    return BINOP_impl(node, context, operator.gt, 'gt')
+
+
+def CONDITION_LESS_impl(node, context):
+    return BINOP_impl(node, context, operator.lt, 'lt')
+
+
+def CONDITION_GREATER_EQUAL_impl(node, context):
+    return BINOP_impl(node, context, operator.ge, 'ge')
+
+
+def CONDITION_LESS_EQUAL_impl(node, context):
+    return BINOP_impl(node, context, operator.le, 'le')
+
+
+def INTERSECTION_impl(node, context):
+    return BINOP_impl(node, context, np.logical_and, 'and')
+
+
+def UNION_impl(node, context):
+    return BINOP_impl(node, context, np.logical_or, 'or')
+
+
+def NEGATION_impl(node, context):
+    argument, = node.parameters
+    context = argument(context)
+    (selection, eval), context = context.pop('select', 'eval')
+    (data,) = context.read('data')
+    if selection is not None:
+        result = ~(data[selection])
+        col_names = [f'not_{c}' for c in selection]
+    else:
+        result = ~eval
+        col_names = [f'not_{c}' for c in eval]
+    data[col_names] = pd.DataFrame(result, index=data.index)
+    return context.write(data=data, select=col_names)
+
+
+def UNION_REDUCE_impl(node, context):
+    argument, = node.parameters
+    context = argument(context)
+    (selection, eval), context = context.pop('select', 'eval')
+    (data,) = context.read('data')
+    if selection is not None:
+        result = data[selection].any(axis=1)
+        col_names = [f"any_{'_or_'.join(selection)}"]
+    else:
+        result = eval.any(axis=1)
+        col_names = [f"any_{'_or_'.join(eval)}"]
+    data[col_names] = pd.DataFrame(result, index=data.index)
+    return context.write(data=data, select=col_names)
+
+
+def INTERSECTION_REDUCE_impl(node, context):
+    argument, = node.parameters
+    context = argument(context)
+    (selection, eval), context = context.pop('select', 'eval')
+    (data,) = context.read('data')
+    if selection is not None:
+        result = data[selection].all(axis=1)
+        col_names = [f"all_{'_and_'.join(selection)}"]
+    else:
+        result = eval.all(axis=1)
+        col_names = [f"all_{'_and_'.join(eval)}"]
+    data[col_names] = pd.DataFrame(result, index=data.index)
+    return context.write(data=data, select=col_names)
+
+
+def INDICATOR_impl(node, context):
+    """
+    This currently is an identity operation, but it might in the future be
+    used to materialize boolean expressions into the DataFrame.
+    """
+    expr, = node.parameters
+    return expr(context)
+
+
 def EXEC_impl(node, context):
     tree, = node.parameters
     (exec_mode,), context = context.pop('eval')
@@ -140,7 +265,7 @@ def EXEC_impl(node, context):
         raise ValueError(f"Invalid exec mode: {exec_mode}")
     context = context.write(data=data)
     context = tree(context)
-    if context.eval:
+    if context.eval is not None:
         result, context = context.pop('eval')
     else:
         (data, selection), context = context.pop('data', 'select')
@@ -173,6 +298,18 @@ INTERPRETERS.register_operation('__all__', 'LITERAL', LITERAL_impl)
 INTERPRETERS.register_operation('__all__', 'RANGE', RANGE_impl)
 INTERPRETERS.register_operation('__all__', 'ENUM', ENUM_impl)
 INTERPRETERS.register_operation('__all__', 'EXECUTION_HEAD', EXEC_impl)
+INTERPRETERS.register_operation('__all__', 'INDICATOR', INDICATOR_impl)
+INTERPRETERS.register_operation('__all__', 'CONDITION_EQUAL', CONDITION_EQUAL_impl)
+INTERPRETERS.register_operation('__all__', 'CONDITION_NOT_EQUAL', CONDITION_NOT_EQUAL_impl)
+INTERPRETERS.register_operation('__all__', 'CONDITION_GREATER', CONDITION_GREATER_impl)
+INTERPRETERS.register_operation('__all__', 'CONDITION_LESS', CONDITION_LESS_impl)
+INTERPRETERS.register_operation('__all__', 'CONDITION_GREATER_EQUAL', CONDITION_GREATER_EQUAL_impl)
+INTERPRETERS.register_operation('__all__', 'CONDITION_LESS_EQUAL', CONDITION_LESS_EQUAL_impl)
+INTERPRETERS.register_operation('__all__', 'UNION', UNION_impl)
+INTERPRETERS.register_operation('__all__', 'INTERSECTION', INTERSECTION_impl)
+INTERPRETERS.register_operation('__all__', 'NEGATION', NEGATION_impl)
+INTERPRETERS.register_operation('__all__', 'UNION_REDUCE', UNION_REDUCE_impl)
+INTERPRETERS.register_operation('__all__', 'INTERSECTION_REDUCE', INTERSECTION_REDUCE_impl)
 
 
 def main():
@@ -192,6 +329,13 @@ def main():
         'dd_[3]((x+y)^2,4-5 + (x+y)^2,4-5)',
         data=pd.DataFrame(
             {'x': [1, 2, 3], 'y': [4, 5, 6]},
+            index=[1, 2, 3],
+        ),
+    )
+    result = processor(
+        'NOT_((x=y && x=z) || x>=w) + AND_(I_[x=y] + I_[x=z] + OR_(I_[x=w] + I_[x=v]))',
+        data=pd.DataFrame(
+            {'x': [1, 2, 3], 'y': [3, 2, 1], 'z': [2, 2, 2], 'w': [0, 2, 3], 'v': [1, 0, 0]},
             index=[1, 2, 3],
         ),
     )

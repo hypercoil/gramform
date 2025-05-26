@@ -22,6 +22,7 @@ _RESERVED = {
     'dd_': 'BACKDIFF_INCLUSIVE',
     'AND_': 'INTERSECTION_REDUCE',
     'OR_': 'UNION_REDUCE',
+    'NOT_': 'NEGATION_SURFACE',
     'n_': 'FIRST_N',
     'v_': 'CUMUL_VAR',
 }
@@ -89,6 +90,7 @@ class MinimalGrammar(Grammar):
         'INTERSECTION',
         'INTERSECTION_REDUCE',
         'NEGATION',
+        'NEGATION_SURFACE',
         'FIRST_N',
         'CUMUL_VAR',
         'SCATTER',
@@ -156,6 +158,13 @@ class MinimalGrammar(Grammar):
         return t
 
     precedence = (
+        ('left', 'CONCATENATE'),
+        ('right', 'SCATTER', 'CUMUL_VAR', 'FIRST_N'),
+        ('right', 'NEGATION'),
+        ('left', 'UNION'),
+        ('left', 'INTERSECTION'),
+        ('right', 'UNION_REDUCE'),
+        ('right', 'INTERSECTION_REDUCE'),
         (
             'left',
             'CONDITION_EQUAL',
@@ -165,13 +174,6 @@ class MinimalGrammar(Grammar):
             'CONDITION_GREATER',
             'CONDITION_GREATER_EQUAL',
         ),
-        ('left', 'CONCATENATE'),
-        ('right', 'SCATTER', 'CUMUL_VAR', 'FIRST_N'),
-        ('right', 'NEGATION'),
-        ('left', 'UNION'),
-        ('left', 'INTERSECTION'),
-        ('right', 'UNION_REDUCE'),
-        ('right', 'INTERSECTION_REDUCE'),
         (
             'left',
             'POWER',
@@ -270,6 +272,10 @@ class MinimalGrammar(Grammar):
     def p_expression_negation(p):
         'expression : NEGATION expression'
         p[0] = NEGATION.bind(p[2])
+
+    def p_expression_negation_surface(p):
+        'expression : NEGATION_SURFACE expression'
+        p[0] = INDICATOR.bind(NEGATION.bind(p[2]))
 
     def p_expression_first_n(p):
         'expression : FIRST_N parameter'
