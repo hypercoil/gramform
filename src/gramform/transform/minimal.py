@@ -9,19 +9,14 @@ Transformations for DataFrame operations.
 import dataclasses
 import operator
 import os
+from functools import reduce
 from itertools import chain
 from typing import Any, Mapping, Iterable, Literal, Sequence
 
+import narwhals as nw
 import numpy as np
-try:
-    import pandas as pd
-except ImportError:
-    pass
-try:
-    import polars as pl
-except ImportError:
-    pass
 import wadler_lindig as wl
+from narwhals.typing import IntoFrame, IntoFrameT
 
 from gramform.core import (
     ExecutionContext,
@@ -93,7 +88,7 @@ def POWER_impl(node, context):
     if pow_cols:
         raise ValueError("Power operation does not support column selection")
     new_selection = []
-    arg = data[selection]
+    values = [nw.col(e) for e in selection]
     if not isinstance(pow_order, Iterable):
         pow_order = (pow_order,)
     for pow in pow_order:
@@ -101,7 +96,10 @@ def POWER_impl(node, context):
             new_selection.extend(selection)
             continue
         new_columns = [f'{e}_power{pow}' for e in selection]
-        data[new_columns] = (arg ** pow).to_numpy()
+        data = data.with_columns([
+            (arg ** pow).alias(col)
+            for col, arg in zip(new_columns, values)
+        ])
         new_selection.extend(new_columns)
     context = context.write(data=data, select=new_selection)
     return context
@@ -116,21 +114,24 @@ def BACKDIFF_impl(node, context):
     if order_cols:
         raise ValueError("Backdiff operation does not support column selection")
     new_selection, result = [], {}
-    arg = data[selection]
+    values = [nw.col(e) for e in selection]
     if not isinstance(order, Iterable):
         order = (order,)
     required_orders = set(order)
     max_order = max(tuple(order))
-    for ord in range(max_order + 1):
-        arg = arg.diff()
+    for ord in range(1, max_order + 1):
+        values = [e.diff() for e in values]
         if ord in required_orders:
-            result[ord] = arg
+            result[ord] = values
     for ord in order:
         if ord == 0:
             new_selection.extend(selection)
             continue
         new_columns = [f'{c}_derivative{ord}' for c in selection]
-        data[new_columns] = result[ord].to_numpy()
+        data = data.with_columns([
+            e.over(order_by='index').alias(col)
+            for e, col in zip(result[ord], new_columns)
+        ])
         new_selection.extend(new_columns)
     context = context.write(data=data, select=new_selection)
     return context
@@ -144,26 +145,32 @@ def BINOP_impl(node, context, op: callable, col_infix: str):
     (right_selection, right_eval), context = context.pop('select', 'eval')
     (data,) = context.read('data')
     if left_selection is not None:
-        left_arg = data[left_selection]
+        left_args = [nw.col(e) for e in left_selection]
         left_cols = left_selection
     else:
-        left_arg = left_eval
+        left_args = [left_eval]
         left_cols = [f'{left_eval}']
     if right_selection is not None:
-        right_arg = data[right_selection]
+        right_args = [nw.col(e) for e in right_selection]
         right_cols = right_selection
     else:
-        right_arg = right_eval
+        right_args = [right_eval]
         right_cols = [f'{right_eval}']
-    result = op(left_arg.to_numpy(), right_arg.to_numpy())
+    result = [
+        op(left_arg, right_arg)
+        for left_arg, right_arg in zip(left_args, right_args)
+    ]
     new_columns = [
         f"{lcol}_{col_infix}_{rcol}"
         for lcol in left_cols
         for rcol in right_cols
     ]
-    data[new_columns] = pd.DataFrame(result, index=data.index)
-    if data.isnull().any().any():
-        raise ValueError("Result of binary operation contains NaN")
+    data = data.with_columns([
+        val.alias(col)
+        for val, col in zip(result, new_columns)
+    ])
+    # if data.isnull().any().any():
+    #     raise ValueError("Result of binary operation contains NaN")
     return context.write(data=data, select=new_columns)
 
 
@@ -202,45 +209,42 @@ def UNION_impl(node, context):
 def NEGATION_impl(node, context):
     argument, = node.parameters
     context = argument(context)
-    (selection, eval), context = context.pop('select', 'eval')
+    (selection,), context = context.pop('select')
     (data,) = context.read('data')
-    if selection is not None:
-        result = ~(data[selection])
-        col_names = [f'not_{c}' for c in selection]
-    else:
-        result = ~eval
-        col_names = [f'not_{c}' for c in eval]
-    data[col_names] = pd.DataFrame(result, index=data.index)
+    result = [~(nw.col(e)) for e in selection]
+    col_names = [f'not_{c}' for c in selection]
+    data = data.with_columns([
+        val.alias(col)
+        for val, col in zip(result, col_names)
+    ])
     return context.write(data=data, select=col_names)
 
 
 def UNION_REDUCE_impl(node, context):
     argument, = node.parameters
     context = argument(context)
-    (selection, eval), context = context.pop('select', 'eval')
+    (selection,), context = context.pop('select')
     (data,) = context.read('data')
-    if selection is not None:
-        result = data[selection].any(axis=1)
-        col_names = [f"any_{'_or_'.join(selection)}"]
-    else:
-        result = eval.any(axis=1)
-        col_names = [f"any_{'_or_'.join(eval)}"]
-    data[col_names] = pd.DataFrame(result, index=data.index)
+    result = [reduce(operator.or_, (nw.col(e) for e in selection))]
+    col_names = [f"any_{'_or_'.join(selection)}"]
+    data = data.with_columns([
+        val.alias(col)
+        for val, col in zip(result, col_names)
+    ])
     return context.write(data=data, select=col_names)
 
 
 def INTERSECTION_REDUCE_impl(node, context):
     argument, = node.parameters
     context = argument(context)
-    (selection, eval), context = context.pop('select', 'eval')
+    (selection,), context = context.pop('select')
     (data,) = context.read('data')
-    if selection is not None:
-        result = data[selection].all(axis=1)
-        col_names = [f"all_{'_and_'.join(selection)}"]
-    else:
-        result = eval.all(axis=1)
-        col_names = [f"all_{'_and_'.join(eval)}"]
-    data[col_names] = pd.DataFrame(result, index=data.index)
+    result = [reduce(operator.and_, (nw.col(e) for e in selection))]
+    col_names = [f"all_{'_and_'.join(selection)}"]
+    data = data.with_columns([
+        val.alias(col)
+        for val, col in zip(result, col_names)
+    ])
     return context.write(data=data, select=col_names)
 
 
@@ -257,25 +261,25 @@ def EXEC_impl(node, context):
     tree, = node.parameters
     (exec_mode,), context = context.pop('eval')
     (input,), context = context.pop('data')
-    if exec_mode == 'df' or isinstance(input, pd.DataFrame):
-        data = input
-    elif exec_mode == 'file' or os.path.isfile(input):
-        data = pd.read_csv(input)
-    else:
-        raise ValueError(f"Invalid exec mode: {exec_mode}")
+    try:
+        data = nw.from_native(input)
+    except TypeError:
+        raise ValueError(f"Invalid input type: {type(input)}")
+    if 'index' not in data:
+        data = data.with_row_index()
     context = context.write(data=data)
     context = tree(context)
     if context.eval is not None:
         result, context = context.pop('eval')
     else:
         (data, selection), context = context.pop('data', 'select')
-        result = data[selection]
-    return context.write(eval=result)
+        result = data.select(selection)
+    return context.write(eval=nw.to_native(result))
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, repr=False)
 class DataFrameContext(ExecutionContext):
-    data: pd.DataFrame
+    data: IntoFrameT
     select: list[str] = dataclasses.field(default_factory=list)
     cache_vars: Mapping[str, callable] = dataclasses.field(
         default_factory=lambda: {
@@ -288,8 +292,7 @@ class DataFrameContext(ExecutionContext):
         return 'exec_mode'
 
 
-INTERPRETERS.register_interpreter('pd')
-INTERPRETERS.register_interpreter('pl')
+INTERPRETERS.register_interpreter('nw')
 INTERPRETERS.register_operation('__all__', 'CONCATENATE', CONCATENATE_impl)
 INTERPRETERS.register_operation('__all__', 'POWER', POWER_impl)
 INTERPRETERS.register_operation('__all__', 'BACKDIFF', BACKDIFF_impl)
@@ -313,6 +316,7 @@ INTERPRETERS.register_operation('__all__', 'INTERSECTION_REDUCE', INTERSECTION_R
 
 
 def main():
+    import pandas as pd
     processor = Processor(
         grammar=MinimalGrammar,
         preprocessors=(confound_formula_preprocessor(),),
@@ -322,7 +326,7 @@ def main():
         ),
         interpreters=INTERPRETERS,
         execution_context=DataFrameContext,
-        default_interpreter='pd',
+        default_interpreter='nw',
     )
     result = processor.process('d_[1]((x+y)^^2 + (x+y)^^2)')
     result = processor(
@@ -332,6 +336,7 @@ def main():
             index=[1, 2, 3],
         ),
     )
+    breakpoint()
     result = processor(
         'NOT_((x=y && x=z) || x>=w) + AND_(I_[x=y] + I_[x=z] + OR_(I_[x=w] + I_[x=v]))',
         data=pd.DataFrame(

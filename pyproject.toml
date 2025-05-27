@@ -28,14 +28,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dfops = [
-    "pandas",
+    "narwhals",
 ]
 imops = [
     "nibabel",
     "jax >= 0.3.16",
 ]
 full = [
-    "pandas",
+    "narwhals",
     "nibabel",
     "jax >= 0.3.16",
 ]
