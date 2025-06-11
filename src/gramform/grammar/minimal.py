@@ -6,28 +6,25 @@ DataFrames
 ~~~~~~~~~~
 Grammar for DataFrame operations.
 """
-from typing import Any, Iterable, Mapping, Tuple, Type
+from dataclasses import dataclass, field
+from typing import Tuple
 
-import ply.lex as lex
-import ply.yacc as yacc
-import wadler_lindig as wl
-
-from gramform.core import Grammar, Primitive, Literal, TransformationContext
-
-
-PRIMITIVES = {}
-_RESERVED = {
-    'I_': 'INDICATOR',
-    'd_': 'BACKDIFF',
-    'dd_': 'BACKDIFF_INCLUSIVE',
-    'AND_': 'INTERSECTION_REDUCE',
-    'OR_': 'UNION_REDUCE',
-    'NOT_': 'NEGATION_SURFACE',
-    'n_': 'FIRST_N',
-    'v_': 'CUMUL_VAR',
-}
+from gramform.core import (
+    Associativity,
+    DynamicGrammar,
+    GrammarComponent,
+    GrammarErrorHandler,
+    Literal,
+    pop_state_and_return,
+    precedence_from_sequence,
+    Primitive,
+    ProductionRule,
+    push_state_and_return,
+    Token,
+)
 
 
+# Base primitives
 CONCATENATE = Primitive("CONCATENATE", is_associative=True)
 POWER = Primitive("POWER")
 BACKDIFF = Primitive("BACKDIFF")
@@ -67,308 +64,512 @@ def confound_formula_preprocessor():
     }
 
 
-class MinimalGrammar(Grammar):
-    tokens = (
-        'CONCATENATE',
-        'POWER',
-        'POWER_INCLUSIVE',
-        'RANGE',
-        'BACKDIFF',
-        'BACKDIFF_INCLUSIVE',
-        'ENUM_SEP',
-        'ARG_SEP',
-        'KV_SEP',
-        'INDICATOR',
-        'CONDITION_EQUAL',
-        'CONDITION_NOT_EQUAL',
-        'CONDITION_LESS',
-        'CONDITION_LESS_EQUAL',
-        'CONDITION_GREATER',
-        'CONDITION_GREATER_EQUAL',
-        'UNION',
-        'UNION_REDUCE',
-        'INTERSECTION',
-        'INTERSECTION_REDUCE',
-        'NEGATION',
-        'NEGATION_SURFACE',
-        'FIRST_N',
-        'CUMUL_VAR',
-        'SCATTER',
-        'LPAREN',
-        'RPAREN',
-        'LBRACKET',
-        'RBRACKET',
-        'LBRACE',
-        'RBRACE',
-        'begin_param',
-        'end_param',
-        'VARIABLE',
-        'FLOAT',
-        'INTEGER',
+_RESERVED = {
+    'I_': 'INDICATOR',
+    'd_': 'BACKDIFF',
+    'dd_': 'BACKDIFF_INCLUSIVE',
+    'AND_': 'INTERSECTION_REDUCE',
+    'OR_': 'UNION_REDUCE',
+    'NOT_': 'NEGATION_SURFACE',
+    'n_': 'FIRST_N',
+    'v_': 'CUMUL_VAR',
+}
+
+
+TOKEN_PRECEDENCE = (
+    "CONCATENATE",
+    ("SCATTER", "CUMUL_VAR", "FIRST_N"),
+    "NEGATION",
+    "UNION",
+    "INTERSECTION",
+    "UNION_REDUCE",
+    "INTERSECTION_REDUCE",
+    "NEGATION_SURFACE",
+    (
+        "CONDITION_EQUAL",
+        "CONDITION_NOT_EQUAL",
+        "CONDITION_LESS",
+        "CONDITION_LESS_EQUAL",
+        "CONDITION_GREATER",
+        "CONDITION_GREATER_EQUAL",
+    ),
+    (
+        "POWER",
+        "POWER_INCLUSIVE",
+    ),
+    (
+        "BACKDIFF",
+        "BACKDIFF_INCLUSIVE",
+    ),
+    "ENUM_SEP",
+    "RANGE",
+    ("begin_param", "end_param"),
+    "ARG_SEP",
+    "KV_SEP",
+)
+from_sequence = precedence_from_sequence(TOKEN_PRECEDENCE)
+
+
+def variable(t):
+    """Handle variable tokens and reserved words."""
+    if t.value in _RESERVED:
+        t.type = _RESERVED[t.value]
+    return t
+
+
+@dataclass(frozen=True)
+class BasicOperatorsComponent(GrammarComponent):
+    """Component for basic operators."""
+    tokens: Tuple[Token, ...] = (
+        # Basic operators
+        Token(
+            'CONCATENATE',
+            r'\+',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+        Token(
+            'RANGE',
+            r'\-',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+        Token(
+            'ENUM_SEP',
+            r',',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+
+        # Parentheses and brackets
+        Token('LPAREN', r'\('),
+        Token('RPAREN', r'\)'),
+        Token('LBRACKET', r'\['),
+        Token('RBRACKET', r'\]'),
+        Token('LBRACE', r'\{'),
+        Token('RBRACE', r'\}'),
+
+        # Numbers
+        Token('FLOAT', r'\d+\.\d*'),
+        Token('INTEGER', r'\d+'),
+
+        # Whitespace
+        Token('ignore', ' \t'),
     )
 
-    states = (
-        ('param', 'exclusive'),
+    states: Tuple[Tuple[str, str], ...] = ()
+
+    production_rules: Tuple[ProductionRule, ...] = (
+        # Basic arithmetic
+        ProductionRule(
+            'p_expression_concatenate',
+            'expression : expression CONCATENATE expression',
+            lambda left, _, right: CONCATENATE.bind(left, right)
+        ),
+        ProductionRule(
+            'p_expression_range',
+            'expression : expression RANGE expression',
+            lambda left, _, right: RANGE.bind(left, right)
+        ),
+        ProductionRule(
+            'p_expression_enum',
+            'expression : expression ENUM_SEP expression',
+            lambda left, _, right: ENUM.bind(left, right)
+        ),
+
+        # Parentheses
+        ProductionRule(
+            'p_expression_paren_term',
+            'expression : LPAREN expression RPAREN',
+            lambda _, inner, __: inner
+        ),
+
+        # Numbers
+        ProductionRule(
+            'p_expression_term_integer',
+            'expression : INTEGER',
+            lambda terminal: Literal.create(int(terminal), int)
+        ),
+        ProductionRule(
+            'p_expression_term_float',
+            'expression : FLOAT',
+            lambda terminal: Literal.create(float(terminal), float)
+        ),
     )
 
-    t_CONCATENATE = r'\+'
-    t_POWER = r'\^'
-    t_POWER_INCLUSIVE = r'\^\^'
-    t_RANGE = r'\-'
-    t_ANY_ENUM_SEP = r','
-    t_param_ARG_SEP = r';'
-    t_param_KV_SEP = r'='
-    t_CONDITION_EQUAL = r'='
-    t_CONDITION_NOT_EQUAL = r'(<>|!=|~=)'
-    t_CONDITION_LESS = r'<'
-    t_CONDITION_LESS_EQUAL = r'<='
-    t_CONDITION_GREATER = r'>'
-    t_CONDITION_GREATER_EQUAL = r'>='
-    t_UNION = r'\|\|'
-    t_INTERSECTION = r'\&\&'
-    t_NEGATION = r'!'
-    t_SCATTER = r'\:\:\:'
-    t_LPAREN = r'\('
-    t_RPAREN = r'\)'
-    t_LBRACKET = r'\['
-    t_RBRACKET = r'\]'
-    t_LBRACE = r'\{'
-    t_RBRACE = r'\}'
-    t_ANY_FLOAT = r'\d+\.\d*'
-    t_ANY_INTEGER = r'\d+'
-    t_ANY_ignore = ' \t'
 
-    def t_ANY_VARIABLE(t):
-        r'[a-zA-Z_][a-zA-Z0-9_]*'
-        if t.value in _RESERVED:
-            t.type = _RESERVED[t.value]
-        return t
-
-    def t_ANY_error(t):
-        raise ValueError(f"Illegal character '{t.value}'")
-    
-    def t_begin_param(t):
-        r'\{\{'
-        t.lexer.push_state('param')
-        return t
-
-    def t_param_end_param(t):
-        r'\}\}'
-        t.lexer.pop_state()
-        return t
-
-    precedence = (
-        ('left', 'CONCATENATE'),
-        ('right', 'SCATTER', 'CUMUL_VAR', 'FIRST_N'),
-        ('right', 'NEGATION'),
-        ('left', 'UNION'),
-        ('left', 'INTERSECTION'),
-        ('right', 'UNION_REDUCE'),
-        ('right', 'INTERSECTION_REDUCE'),
-        (
-            'left',
+@dataclass(frozen=True)
+class ConditionComponent(GrammarComponent):
+    """Component for condition handling."""
+    tokens: Tuple[Token, ...] = (
+        Token(
             'CONDITION_EQUAL',
+            r'=',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+        Token(
             'CONDITION_NOT_EQUAL',
+            r'(<>|!=|~=)',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+        Token(
             'CONDITION_LESS',
+            r'<',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+        Token(
             'CONDITION_LESS_EQUAL',
+            r'<=',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+        Token(
             'CONDITION_GREATER',
+            r'>',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+        Token(
             'CONDITION_GREATER_EQUAL',
+            r'>=',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
         ),
-        (
-            'left',
+    )
+
+    production_rules: Tuple[ProductionRule, ...] = (
+        ProductionRule(
+            'p_expression_condition_equal',
+            'expression : expression CONDITION_EQUAL expression',
+            lambda left, _, right: CONDITION_EQUAL.bind(left, right)
+        ),
+        ProductionRule(
+            'p_expression_condition_not_equal',
+            'expression : expression CONDITION_NOT_EQUAL expression',
+            lambda left, _, right: CONDITION_NOT_EQUAL.bind(left, right)
+        ),
+        ProductionRule(
+            'p_expression_condition_less',
+            'expression : expression CONDITION_LESS expression',
+            lambda left, _, right: CONDITION_LESS.bind(left, right)
+        ),
+        ProductionRule(
+            'p_expression_condition_less_equal',
+            'expression : expression CONDITION_LESS_EQUAL expression',
+            lambda left, _, right: CONDITION_LESS_EQUAL.bind(left, right)
+        ),
+        ProductionRule(
+            'p_expression_condition_greater',
+            'expression : expression CONDITION_GREATER expression',
+            lambda left, _, right: CONDITION_GREATER.bind(left, right)
+        ),
+        ProductionRule(
+            'p_expression_condition_greater_equal',
+            'expression : expression CONDITION_GREATER_EQUAL expression',
+            lambda left, _, right: CONDITION_GREATER_EQUAL.bind(left, right)
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class BooleanLogicComponent(GrammarComponent):
+    """Component for boolean logic."""
+    tokens: Tuple[Token, ...] = (
+        Token(
+            'UNION',
+            r'\|\|',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+        Token(
+            'INTERSECTION',
+            r'\&\&',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+        Token(
+            'NEGATION',
+            r'!',
+            precedence=from_sequence,
+            associativity=Associativity.RIGHT,
+        ),
+        Token(
+            'INDICATOR',
+            r'I_',
+            is_reserved=True,
+            precedence=from_sequence,
+        ),
+        Token(
+            'INTERSECTION_REDUCE',
+            r'AND_',
+            is_reserved=True,
+            precedence=from_sequence,
+        ),
+        Token(
+            'UNION_REDUCE',
+            r'OR_',
+            is_reserved=True,
+            precedence=from_sequence,
+        ),
+        Token(
+            'NEGATION_SURFACE',
+            r'NOT_',
+            is_reserved=True,
+            precedence=from_sequence,
+        ),
+        Token(
+            'SCATTER',
+            r'\:\:\:',
+            precedence=1,
+            associativity=Associativity.RIGHT,
+        ),
+    )
+
+    production_rules: Tuple[ProductionRule, ...] = (
+        ProductionRule(
+            'p_expression_union',
+            'expression : expression UNION expression',
+            lambda left, _, right: UNION.bind(left, right)
+        ),
+        ProductionRule(
+            'p_expression_intersection',
+            'expression : expression INTERSECTION expression',
+            lambda left, _, right: INTERSECTION.bind(left, right)
+        ),
+        ProductionRule(
+            'p_expression_negation',
+            'expression : NEGATION expression',
+            lambda _, right: NEGATION.bind(right)
+        ),
+        ProductionRule(
+            'p_expression_indicator',
+            'expression : INDICATOR parameter',
+            lambda _, parameter: INDICATOR.bind(parameter)
+        ),
+        ProductionRule(
+            'p_expression_intersection_reduce',
+            'expression : INTERSECTION_REDUCE LPAREN expression RPAREN',
+            lambda _, __, right, ___: INTERSECTION_REDUCE.bind(right)
+        ),
+        ProductionRule(
+            'p_expression_union_reduce',
+            'expression : UNION_REDUCE LPAREN expression RPAREN',
+            lambda _, __, right, ___: UNION_REDUCE.bind(right)
+        ),
+        ProductionRule(
+            'p_expression_negation_surface',
+            'expression : NEGATION_SURFACE LPAREN expression RPAREN',
+            lambda _, __, right, ___: INDICATOR.bind(NEGATION.bind(right))
+        ),
+        ProductionRule(
+            'p_expression_scatter',
+            'expression : SCATTER expression',
+            lambda _, right: SCATTER.bind(right)
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class ParameterComponent(GrammarComponent):
+    """Component for parameter handling."""
+
+    tokens: Tuple[Token, ...] = (
+        # Parameter state tokens
+        Token(
+            'begin_param',
+            r'\{\{',
+            function=push_state_and_return('param'),
+            precedence=from_sequence,
+        ),
+        Token(
+            'end_param',
+            r'\}\}',
+            function=pop_state_and_return,
+            precedence=from_sequence,
+        ),
+        Token(
+            'ARG_SEP',
+            r';',
+            state='param',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+        Token(
+            'KV_SEP',
+            r'=',
+            state='param',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+    )
+
+    states: Tuple[Tuple[str, str], ...] = (
+        ('param', 'inclusive'),
+    )
+
+    production_rules: Tuple[ProductionRule, ...] = (
+        ProductionRule(
+            'p_expression_parameter',
+            'parameter : LBRACKET expression RBRACKET',
+            lambda _, inner, __: inner
+        ),
+        ProductionRule(
+            'p_expression_parameterisation',
+            'parameter : begin_param expression end_param',
+            lambda _, inner, __: (
+                COLLECT_PARAMETERS.bind(*inner)
+                if isinstance(inner, tuple)
+                else COLLECT_PARAMETERS.bind(inner)
+            )
+        ),
+        ProductionRule(
+            'p_param_expr',
+            'expression : expression ARG_SEP expression',
+            lambda left, _, right: COLLECT_PARAMETERS.bind(*(
+                tuple(left if isinstance(left, tuple) else (left,)) +
+                tuple(right if isinstance(right, tuple) else (right,))
+            ))
+        ),
+        ProductionRule(
+            'p_param_expr_key_val',
+            'expression : expression KV_SEP expression',
+            lambda left, _, right: ASSIGNMENT.bind(left, right)
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class VariableComponent(GrammarComponent):
+    """Component for variable handling."""
+
+    tokens: Tuple[Token, ...] = (
+        Token(
+            'VARIABLE',
+            r'[a-zA-Z_][a-zA-Z0-9_]*',
+            function=variable,
+            precedence=from_sequence,
+        ),
+    )
+
+    production_rules: Tuple[ProductionRule, ...] = (
+        ProductionRule(
+            'p_expression_term_variable',
+            'expression : VARIABLE',
+            lambda terminal: VARIABLE.bind(terminal)
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class SpecialOperatorsComponent(GrammarComponent):
+    """Component for special operators like indicators and backdiff."""
+
+    tokens: Tuple[Token, ...] = (
+        Token(
             'POWER',
+            r'\^',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
+        ),
+        Token(
             'POWER_INCLUSIVE',
+            r'\^\^',
+            precedence=from_sequence,
+            associativity=Associativity.LEFT,
         ),
-        (
-            'right',
+        Token(
             'BACKDIFF',
-            'BACKDIFF_INCLUSIVE',
+            r'd_',
+            is_reserved=True,
+            precedence=from_sequence,
         ),
-        ('left', 'ENUM_SEP'),
-        ('left', 'RANGE'),
-        ('left', 'begin_param', 'end_param'),
-        ('left', 'ARG_SEP'),
-        ('left', 'KV_SEP'),
+        Token(
+            'BACKDIFF_INCLUSIVE',
+            r'dd_',
+            is_reserved=True,
+            precedence=from_sequence,
+        ),
+        Token(
+            'FIRST_N',
+            r'n_',
+            is_reserved=True,
+            precedence=from_sequence,
+        ),
+        Token(
+            'CUMUL_VAR',
+            r'v_',
+            is_reserved=True,
+            precedence=from_sequence,
+        ),
     )
 
-    def p_expression_concatenate(p):
-        'expression : expression CONCATENATE expression'
-        p[0] = CONCATENATE.bind(p[1], p[3])
-
-    def p_expression_power(p):
-        'expression : expression POWER expression'
-        p[0] = POWER.bind(p[1], p[3])
-
-    def p_expression_power_inclusive(p):
-        'expression : expression POWER_INCLUSIVE expression'
-        p[0] = POWER.bind(p[1], RANGE.bind(
-            Literal.create(1, int),
-            p[3],
-        ))
-
-    def p_expression_backdiff(p):
-        'expression : BACKDIFF parameter LPAREN expression RPAREN'
-        p[0] = BACKDIFF.bind(p[4], p[2])
-
-    def p_expression_backdiff_inclusive(p):
-        'expression : BACKDIFF_INCLUSIVE parameter LPAREN expression RPAREN'
-        p[0] = BACKDIFF.bind(p[4], RANGE.bind(
-            Literal.create(0, int),
-            p[2],
-        ))
-
-    def p_expression_range(p):
-        'expression : expression RANGE expression'
-        p[0] = RANGE.bind(p[1], p[3])
-
-    def p_expression_enum(p):
-        'expression : expression ENUM_SEP expression'
-        p[0] = ENUM.bind(p[1], p[3])
-
-    def p_expression_indicator(p):
-        'expression : INDICATOR parameter'
-        p[0] = INDICATOR.bind(p[2])
-
-    def p_expression_condition_equal(p):
-        'expression : expression CONDITION_EQUAL expression'
-        p[0] = CONDITION_EQUAL.bind(p[1], p[3])
-
-    def p_expression_condition_not_equal(p):
-        'expression : expression CONDITION_NOT_EQUAL expression'
-        p[0] = CONDITION_NOT_EQUAL.bind(p[1], p[3])
-
-    def p_expression_condition_less(p):
-        'expression : expression CONDITION_LESS expression'
-        p[0] = CONDITION_LESS.bind(p[1], p[3])
-
-    def p_expression_condition_less_equal(p):
-        'expression : expression CONDITION_LESS_EQUAL expression'
-        p[0] = CONDITION_LESS_EQUAL.bind(p[1], p[3])
-
-    def p_expression_condition_greater(p):
-        'expression : expression CONDITION_GREATER expression'
-        p[0] = CONDITION_GREATER.bind(p[1], p[3])
-
-    def p_expression_condition_greater_equal(p):
-        'expression : expression CONDITION_GREATER_EQUAL expression'
-        p[0] = CONDITION_GREATER_EQUAL.bind(p[1], p[3])
-
-    def p_expression_union(p):
-        'expression : expression UNION expression'
-        p[0] = UNION.bind(p[1], p[3])
-
-    def p_expression_union_reduce(p):
-        'expression : UNION_REDUCE expression'
-        p[0] = UNION_REDUCE.bind(p[2])
-
-    def p_expression_intersection(p):
-        'expression : expression INTERSECTION expression'
-        p[0] = INTERSECTION.bind(p[1], p[3])
-
-    def p_expression_intersection_reduce(p):
-        'expression : INTERSECTION_REDUCE expression'
-        p[0] = INTERSECTION_REDUCE.bind(p[2])
-
-    def p_expression_negation(p):
-        'expression : NEGATION expression'
-        p[0] = NEGATION.bind(p[2])
-
-    def p_expression_negation_surface(p):
-        'expression : NEGATION_SURFACE expression'
-        p[0] = INDICATOR.bind(NEGATION.bind(p[2]))
-
-    def p_expression_first_n(p):
-        'expression : FIRST_N parameter'
-        p[0] = FIRST_N.bind(p[2])
-
-    def p_expression_cumul_var(p):
-        'expression : CUMUL_VAR parameter'
-        p[0] = CUMUL_VAR.bind(p[2])
-
-    def p_expression_scatter(p):
-        'expression : SCATTER expression'
-        p[0] = SCATTER.bind(p[2])
-
-    def p_expression_paren_term(p):
-        'expression : LPAREN expression RPAREN'
-        p[0] = p[2]
-
-    def p_expression_parameter(p):
-        'parameter : LBRACKET expression RBRACKET'
-        p[0] = p[2]
-
-    def p_expression_parameterisation(p):
-        'parameter : begin_param expression end_param'
-        parameters = p[2]
-        if isinstance(parameters, tuple):
-            p[0] = COLLECT_PARAMETERS.bind(*parameters)
-        else:
-            p[0] = COLLECT_PARAMETERS.bind(parameters)
-
-    def p_param_expr(p):
-        'expression : expression ARG_SEP expression'
-        left, right = p[1], p[3]
-        if not isinstance(left, Iterable):
-            left = (left,)
-        if not isinstance(right, Iterable):
-            right = (right,)
-        p[0] = tuple(left) + tuple(right)
-
-    def p_param_expr_key_val(p):
-        'expression : expression KV_SEP expression'
-        p[0] = ASSIGNMENT.bind(p[1], p[3])
-
-    def p_expression_term_variable(p):
-        'expression : VARIABLE'
-        p[0] = VARIABLE.bind(p[1])
-
-    def p_expression_term_integer(p):
-        'expression : INTEGER'
-        p[0] = Literal.create(int(p[1]), int)
-
-    def p_expression_term_float(p):
-        'expression : FLOAT'
-        p[0] = Literal.create(float(p[1]), float)
-
-    def p_error(p):
-        raise ValueError(f"Syntax error: {p}")
-
-
-def MinimalGrammarLexer(**params):
-    lexer = lex.lex(module=MinimalGrammar, **params)
-    return lexer
-
-
-def MinimalGrammarParser(**params):
-    parser = yacc.yacc(module=MinimalGrammar, **params)
-    return parser
-
-
-def main():
-    from gramform.core import ppr_execution_head
-    from gramform.postprocessors import (
-        ppr_associative_flatten,
-        ppr_common_subexpression,
+    production_rules: Tuple[ProductionRule, ...] = (
+        ProductionRule(
+            'p_expression_power',
+            'expression : expression POWER expression',
+            lambda left, _, right: POWER.bind(left, right)
+        ),
+        ProductionRule(
+            'p_expression_power_inclusive',
+            'expression : expression POWER_INCLUSIVE expression',
+            lambda left, _, right: POWER.bind(left, RANGE.bind(
+                Literal.create(1, int),
+                right,
+            ))
+        ),
+        ProductionRule(
+            'p_expression_backdiff',
+            'expression : BACKDIFF parameter LPAREN expression RPAREN',
+            lambda _, parameter, __, inner, ___: BACKDIFF.bind(inner, parameter)
+        ),
+        ProductionRule(
+            'p_expression_backdiff_inclusive',
+            'expression : BACKDIFF_INCLUSIVE parameter LPAREN expression RPAREN',
+            lambda _, parameter, __, inner, ___: BACKDIFF.bind(inner, RANGE.bind(
+                Literal.create(0, int),
+                parameter,
+            ))
+        ),
+        ProductionRule(
+            'p_expression_first_n',
+            'expression : FIRST_N parameter',
+            lambda _, parameter: FIRST_N.bind(parameter)
+        ),
+        ProductionRule(
+            'p_expression_cumul_var',
+            'expression : CUMUL_VAR parameter',
+            lambda _, parameter: CUMUL_VAR.bind(parameter)
+        ),
     )
-    # expr = '(x+y+z)^^2+(x+y+z)+((x+y+z)^2+(x+y+z))^3.13-5'
-    # expr = '(x+y+z)^^2-3 + I_[x=y] + d_[1,4-5](x)'
-    # expr = ':::!((I_[x=y] && I_[x=z]) || I_[x>=w]) + AND_(I_[x=y] + I_[x=z] + OR_(I_[x=w] + I_[x=v])) + v_{{test; x=1; y=2; z=3}}'
-    # expr = '(x+y+z)^^2 + (x+y+z)^^2 + (x+y+z)^^2'
-    expr = 'd_[1]((x+y)^^2 + (x+y)^^2) + d_[1]((x+y)^^2 + (x+y)^^2)'
-    lexer = MinimalGrammarLexer()
-    parser = MinimalGrammarParser()
-    lexer.input(expr)
-    for tok in lexer:
-        print(tok)
-    result = parser.parse(expr)
-    print(result)
-    context = TransformationContext()
-    result, context = ppr_associative_flatten(result, context)
-    result, context = ppr_common_subexpression(result, context)
-    result, context = ppr_execution_head(result, context)
-    print(result)
-    breakpoint()
 
 
-if __name__ == "__main__":
-    main()
+class MinimalGrammar(DynamicGrammar):
+    """Grammar for DataFrame operations using composable components."""
+
+    def __init__(self):
+        super().__init__(
+            components=(
+                BasicOperatorsComponent(),
+                ConditionComponent(),
+                BooleanLogicComponent(),
+                ParameterComponent(),
+                VariableComponent(),
+                SpecialOperatorsComponent(),
+            ),
+            error_handler=GrammarErrorHandler(
+                error_contexts={
+                    'PARAM': "Invalid parameter syntax",
+                    'VARIABLE': "Invalid variable name",
+                    'OPERATOR': "Invalid operator usage",
+                    'CONDITION': "Invalid condition expression",
+                    'PARENTHESIS': "Mismatched parentheses",
+                    'BRACKET': "Mismatched brackets",
+                    'BRACE': "Mismatched braces",
+                    'NUMBER': "Invalid number format",
+                    'RESERVED': "Invalid use of reserved word",
+                }
+            )
+        )

@@ -9,11 +9,45 @@ Core components of the `gramform` library for building simple DSLs.
 import dataclasses
 import inspect
 import re
-from typing import Any, Mapping, Tuple, Type
+from functools import lru_cache
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Type
+from enum import Enum, auto
 
 import ply.lex as lex
 import ply.yacc as yacc
 import wadler_lindig as wl
+
+
+@lru_cache(maxsize=None)
+def precedence_from_sequence(
+    sequence: Tuple[str | Tuple[str, ...], ...],
+    default: int = 0,
+) -> Callable[[str], int]:
+    sequence = tuple(sequence)
+    precedence = {}
+    for i, token in enumerate(sequence):
+        if isinstance(token, str):
+            precedence[token] = i
+        elif isinstance(token, tuple):
+            for t in token:
+                precedence[t] = i
+
+    def from_sequence(token: str) -> int:
+        return precedence.get(token, default)
+
+    return from_sequence
+
+
+def push_state_and_return(state: str):
+    def _inner(t):
+        t.lexer.push_state(state)
+        return t
+    return _inner
+
+
+def pop_state_and_return(t):
+    t.lexer.pop_state()
+    return t
 
 
 @dataclasses.dataclass(frozen=True)
@@ -44,6 +78,7 @@ class Primitive:
 
     def bind(self, *pparams):
         pparams = pparams or ()
+        print(f"Primitive {self.name} bound with {pparams}")
         return type(self)(
             name=self.name,
             parameters=tuple(pparams),
@@ -263,7 +298,9 @@ class Processor:
         for preprocessor in self.preprocessors:
             if isinstance(preprocessor, Mapping):
                 expr = re.sub(
-                    rf'\b({"|".join(re.escape(key) for key in preprocessor)})',
+                    rf'\b({"|".join(
+                        re.escape(key) for key in preprocessor
+                    )})',
                     lambda m: preprocessor[m.group(0)],
                     expr,
                 )
@@ -341,3 +378,391 @@ def ppr_execution_head(
 
 
 EXECUTION_HEAD = Primitive('EXECUTION_HEAD')
+
+
+@dataclasses.dataclass(frozen=True)
+class ProductionRule:
+    """A production rule in BNF format."""
+    name: str  # Name of the production function (e.g., 'p_expression_condition_equal')
+    rule: str  # BNF rule (e.g., 'expression : expression CONDITION_EQUAL expression')
+    implementation: callable  # The actual implementation function
+
+    def __post_init__(self):
+        """Validate the production rule."""
+        if not self.name.startswith('p_'):
+            raise ValueError("Production function names must start with 'p_'")
+        if ':' not in self.rule:
+            raise ValueError(
+                "Production rule must contain ':' to separate LHS and RHS"
+            )
+
+    def __repr__(self):
+        return wl.pformat(self)
+
+    def materialise(self) -> callable:
+        """Create a PLY-compatible production function."""
+        def production_func(p):
+            p[0] = self.implementation(*p[1:])
+        production_func.__name__ = self.name
+        production_func.__doc__ = self.rule
+        return production_func
+
+
+class Associativity(Enum):
+    """Associativity of operators."""
+    LEFT = auto()
+    RIGHT = auto()
+    NONE = auto()  # For non-operator tokens
+
+
+@dataclasses.dataclass(frozen=True)
+class Token:
+    """A token in the grammar."""
+    name: str  # Name of the token (e.g., 'CONCATENATE')
+    regex: str  # Regex pattern for the token (e.g., r'\+')
+    function: Optional[callable] = None  # Optional function to handle the token
+    state: Optional[str] = None  # Optional lexer state for the token
+    precedence: int = 0  # Precedence level (higher = tighter binding)
+    associativity: Associativity = Associativity.NONE  # Associativity of the token
+    is_reserved: bool = False  # Whether this is a reserved word
+
+    def __post_init__(self):
+        """Validate the token."""
+        if not self.name:
+            raise ValueError("Token name cannot be empty")
+        if not self.regex:
+            raise ValueError("Token regex cannot be empty")
+        if self.function and not callable(self.function):
+            raise ValueError("Token function must be callable")
+        if self.state and not isinstance(self.state, str):
+            raise ValueError("Token state must be a string")
+        if isinstance(self.precedence, Mapping):
+            object.__setattr__(
+                self,
+                'precedence',
+                self.precedence.get(self.name, 0),
+            )
+        elif isinstance(self.precedence, Callable):
+            object.__setattr__(
+                self,
+                'precedence',
+                self.precedence(self.name),
+            )
+        if not isinstance(self.precedence, int):
+            raise ValueError(
+                "Token precedence must be an integer, a callable, "
+                "or a mapping"
+            )
+        if not isinstance(self.associativity, Associativity):
+            raise ValueError("Token associativity must be an Associativity enum")
+
+    def materialise(self) -> Tuple[str, Callable | str]:
+        """Create a PLY-compatible token function or regex."""
+        if self.state:
+            state_name = f'{self.state}_'
+        else:
+            state_name = 'ANY_'
+        name = f't_{state_name}{self.name}'
+
+        if not self.function:
+            return name, self.regex
+
+        func = self.function
+        func.__name__ = name
+        func.__doc__ = self.regex
+        return name, func
+
+
+@dataclasses.dataclass(frozen=True)
+class GrammarComponent:
+    """A composable component of a grammar that can be merged with others."""
+    tokens: Tuple[Token, ...] = dataclasses.field(default_factory=tuple)
+    states: Tuple[Tuple[str, str], ...] = dataclasses.field(
+        default_factory=tuple,
+    )
+    production_rules: Tuple[ProductionRule, ...] = dataclasses.field(
+        default_factory=tuple,
+    )
+    _is_built: bool = dataclasses.field(default=False)
+
+    def __post_init__(self):
+        """Validate the component's attributes."""
+        # Validate tokens
+        if not all(isinstance(t, Token) for t in self.tokens):
+            raise ValueError("All tokens must be Token instances")
+
+        # Validate states
+        if not all(
+            isinstance(s, tuple) and len(s) == 2 and
+            isinstance(s[0], str) and isinstance(s[1], str)
+            for s in self.states
+        ):
+            raise ValueError("States must be tuples of (str, str)")
+
+        # Validate production rules
+        if not all(
+            isinstance(rule, ProductionRule)
+            for rule in self.production_rules
+        ):
+            raise ValueError(
+                "All production rules must be ProductionRule instances"
+            )
+
+    def __repr__(self):
+        return wl.pformat(self)
+
+    def build(self) -> 'GrammarComponent':
+        """Build the component, making it ready for use in a grammar."""
+        if self._is_built:
+            raise ValueError("Component is already built")
+
+        return dataclasses.replace(self, _is_built=True)
+
+    def merge(self, other: 'GrammarComponent') -> 'GrammarComponent':
+        """Merge this component with another, returning a new component."""
+        if not self._is_built or not other._is_built:
+            raise ValueError("Both components must be built before merging")
+
+        # Check for production rule conflicts
+        self_rules = {rule.name for rule in self.production_rules}
+        other_rules = {rule.name for rule in other.production_rules}
+        conflicts = self_rules & other_rules
+        if conflicts:
+            raise ValueError(f"Conflicting production rules: {conflicts}")
+
+        # Check for token conflicts
+        self_tokens = {token.name for token in self.tokens}
+        other_tokens = {token.name for token in other.tokens}
+        conflicts = self_tokens & other_tokens
+        if conflicts:
+            raise ValueError(f"Conflicting tokens: {conflicts}")
+
+        return dataclasses.replace(
+            self,
+            tokens=self.tokens + other.tokens,
+            states=self.states + other.states,
+            production_rules=self.production_rules + other.production_rules,
+            _is_built=True,
+        )
+
+    def __add__(self, other: 'GrammarComponent') -> 'GrammarComponent':
+        return self.merge(other)
+
+
+@dataclasses.dataclass(frozen=True)
+class GrammarErrorHandler:
+    """
+    Handler for grammar-level errors.
+
+    Attributes
+    ----------
+    token_error: Optional[callable]
+        Function to handle lexer errors.
+    parser_error: Optional[callable]
+        Function to handle parser errors.
+    error_contexts: Dict[str, str]
+        Mapping of error contexts to messages.
+    example_values: Dict[str, str]
+        Mapping of token types to example values.
+    _parser: Optional[Any]
+        Reference to the parser instance.
+    """
+    token_error: Optional[callable] = None
+    parser_error: Optional[callable] = None
+    error_contexts: Dict[str, str] = dataclasses.field(
+        default_factory=dict
+    )
+    example_values: Dict[str, str] = dataclasses.field(
+        default_factory=dict
+    )
+    _parser: Optional[Any] = None
+
+    def __post_init__(self):
+        """Validate the error handler."""
+        if self.token_error and not callable(self.token_error):
+            raise ValueError("Token error handler must be callable")
+        if self.parser_error and not callable(self.parser_error):
+            raise ValueError("Parser error handler must be callable")
+        if not all(
+            isinstance(k, str) and isinstance(v, str)
+            for k, v in self.error_contexts.items()
+        ):
+            raise ValueError("Error contexts must be string-string pairs")
+        if not all(
+            isinstance(k, str) and isinstance(v, str)
+            for k, v in self.example_values.items()
+        ):
+            raise ValueError("Example values must be string-string pairs")
+
+    def create_token_error_function(self) -> callable:
+        """Create a PLY-compatible token error function."""
+        if self.token_error:
+            return self.token_error
+        # Default token error handler with context
+        def t_error(t):
+            raise ValueError(
+                f"Unexpected token: {t.value!r} at position {t.lexpos}"
+            )
+        return t_error
+
+    def create_parser_error_function(self) -> callable:
+        """Create a PLY-compatible parser error function."""
+        if self.parser_error:
+            return self.parser_error
+        # Default parser error handler with context
+        def p_error(p):
+            raise ValueError("Parser error")
+        return p_error
+
+    def _set_parser(self, parser: Any) -> None:
+        """Set the parser reference for error handling."""
+        object.__setattr__(self, '_parser', parser)
+
+
+@dataclasses.dataclass(frozen=True)
+class DynamicGrammar(Grammar):
+    """A grammar composed from multiple components."""
+    components: Tuple[GrammarComponent, ...]
+    error_handler: GrammarErrorHandler = dataclasses.field(
+        default_factory=GrammarErrorHandler
+    )
+    productions: Optional[Tuple[ProductionRule, ...]] = dataclasses.field(
+        default=None,
+        init=False,
+    )
+    _is_initialized: bool = dataclasses.field(
+        default=False,
+        init=False,
+    )
+    _example_cache_file: str = dataclasses.field(
+        default='.grammar_examples.json',
+        init=False,
+    )
+    _lexer: Optional[Any] = dataclasses.field(
+        default=None,
+        init=False,
+    )
+    _parser: Optional[Any] = dataclasses.field(
+        default=None,
+        init=False,
+    )
+
+    def __post_init__(self):
+        """Build the grammar from components."""
+        if self._is_initialized:
+            return
+
+        # Build all components
+        built_components = [c.build() for c in self.components]
+
+        # Merge components
+        base = built_components[0]
+        for component in built_components[1:]:
+            base = base.merge(component)
+        object.__setattr__(self, 'productions', base.production_rules)
+
+        # Set up PLY-compatible grammar attributes
+        object.__setattr__(
+            self,
+            'tokens',
+            tuple(token.name for token in base.tokens),
+        )
+        object.__setattr__(
+            self,
+            'states',
+            base.states,
+        )
+        # Build precedence rules from token properties
+        precedence_rules = []
+        for token in base.tokens:
+            if token.associativity != Associativity.NONE:
+                precedence_rules.append((
+                    (
+                        'left'
+                        if token.associativity == Associativity.LEFT
+                        else 'right'
+                    ),
+                    token.name,
+                ))
+        # Sort by precedence level (earlier = tighter binding)
+        precedence_rules.sort(key=lambda x: next(
+            t.precedence for t in base.tokens if t.name == x[1]
+        ))
+        object.__setattr__(self, 'precedence', tuple(precedence_rules))
+
+        # Register production rules
+        for rule in base.production_rules:
+            setattr(self, rule.name, rule.materialise())
+
+        # Register token rules
+        for token in base.tokens:
+            setattr(self, *token.materialise())
+
+        # Register error handlers
+        setattr(
+            self,
+            't_error',
+            self.error_handler.create_token_error_function(),
+        )
+        setattr(
+            self,
+            'p_error',
+            self.error_handler.create_parser_error_function(),
+        )
+        # Build reserved words mapping
+        reserved = {
+            token.name: token.name
+            for token in base.tokens
+            if token.is_reserved
+        }
+        object.__setattr__(self, '_reserved', reserved)
+
+        lexer = lex.lex(module=self)
+        parser = yacc.yacc(module=self)
+        lexer.grammar = self
+        parser.grammar = self
+        self.error_handler._set_parser(parser)
+        object.__setattr__(self, '_lexer', lexer)
+        object.__setattr__(self, '_parser', parser)
+
+        # Mark as initialized
+        object.__setattr__(self, '_is_initialized', True)
+
+    def __getattr__(self, name: str) -> Any:
+        """Handle dynamic attribute access for PLY compatibility."""
+        if name.startswith('t_'):
+            # Handle token patterns
+            if name in self._reserved:
+                return lambda t: self._reserved[name]
+        return super().__getattribute__(name)
+
+    def __repr__(self):
+        return wl.pformat(self)
+
+    @property
+    def reserved(self) -> Dict[str, str]:
+        return self._reserved
+
+    def input(self, data: str) -> Any:
+        """Lex the input data."""
+        return self._lexer.input(data)
+
+    def parse(self, data: str) -> Any:
+        """Parse the input data."""
+        return self._parser.parse(data)
+
+    def refresh(self) -> 'DynamicGrammar':
+        """Refresh the lexer and parser."""
+        lexer = lex.lex(module=self)
+        parser = yacc.yacc(module=self)
+        return dataclasses.replace(
+            self,
+            _lexer=lexer,
+            _parser=parser,
+        )
+
+    def __lexer__(self):
+        return self._lexer
+
+    def __parser__(self):
+        return self._parser

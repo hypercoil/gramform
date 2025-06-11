@@ -318,7 +318,7 @@ INTERPRETERS.register_operation('__all__', 'INTERSECTION_REDUCE', INTERSECTION_R
 def main():
     import pandas as pd
     processor = Processor(
-        grammar=MinimalGrammar,
+        grammar=MinimalGrammar(),
         preprocessors=(confound_formula_preprocessor(),),
         postprocessors=(
             ppr_associative_flatten,
