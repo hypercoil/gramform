@@ -456,6 +456,16 @@ class Token:
         if not isinstance(self.associativity, Associativity):
             raise ValueError("Token associativity must be an Associativity enum")
 
+    def generate_example(self) -> str:
+        """
+        Generate an example value for this token based on its regex pattern.
+
+        This is a crude AI-generated placeholder. We should use a more
+        principled approach to generating examples through deterministic
+        traversal of the regex AST.
+        """
+        return generate_valid_completion(self.regex)
+
     def materialise(self) -> Tuple[str, Callable | str]:
         """Create a PLY-compatible token function or regex."""
         if self.state:
@@ -594,6 +604,25 @@ class GrammarErrorHandler:
         ):
             raise ValueError("Example values must be string-string pairs")
 
+    def materialise_examples(
+        self,
+        tokens: Tuple[Token, ...],
+        precomputed: Dict[str, str] = None,
+    ) -> 'GrammarErrorHandler':
+        """Generate and cache example values for tokens."""
+        example_values = {
+            token.name: precomputed.get(token.name, token.generate_example())
+            for token in tokens
+        }
+        return dataclasses.replace(
+            self,
+            example_values=example_values
+        )
+
+    def _set_parser(self, parser: Any) -> None:
+        """Set the parser reference for error handling."""
+        object.__setattr__(self, '_parser', parser)
+
     def create_token_error_function(self) -> callable:
         """Create a PLY-compatible token error function."""
         if self.token_error:
@@ -697,6 +726,37 @@ class DynamicGrammar(Grammar):
         # Register token rules
         for token in base.tokens:
             setattr(self, *token.materialise())
+
+        # Load or generate example values
+        try:
+            import json
+            import os
+            if os.path.exists(self._example_cache_file):
+                with open(self._example_cache_file, 'r') as f:
+                    cached_examples = json.load(f)
+                # Update error handler with cached examples
+                error_handler = self.error_handler.materialise_examples(
+                    base.tokens,
+                    cached_examples,
+                )
+            else:
+                # Generate and cache examples
+                error_handler = self.error_handler.materialise_examples(
+                    base.tokens,
+                )
+                # Cache the examples
+                with open(self._example_cache_file, 'w') as f:
+                    json.dump(error_handler.example_values, f, indent=2)
+        except (ImportError, IOError, json.JSONDecodeError):
+            # Fallback to generating examples without caching
+            error_handler = self.error_handler.materialise_examples(
+                base.tokens,
+            )
+        object.__setattr__(
+            self,
+            'error_handler',
+            error_handler,
+        )
 
         # Register error handlers
         setattr(
