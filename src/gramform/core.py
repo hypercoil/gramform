@@ -629,9 +629,55 @@ class GrammarErrorHandler:
             return self.token_error
         # Default token error handler with context
         def t_error(t):
-            raise ValueError(
-                f"Unexpected token: {t.value!r} at position {t.lexpos}"
-            )
+            # Get the line and column information
+            try:
+                lexdata = t.lexer.lexdata
+                pos = t.lexpos
+                # Compute line number and line start
+                line = lexdata.count('\n', 0, pos) + 1
+                line_start = lexdata.rfind('\n', 0, pos) + 1
+                line_end = lexdata.find('\n', pos)
+                if line_end == -1:
+                    line_end = len(lexdata)
+                line_content = lexdata[line_start:line_end]
+                value = t.value
+                # If the error token is more than one character, point to the first character
+                if isinstance(value, str) and len(value) > 1:
+                    col = pos - line_start + 1
+                else:
+                    col = pos - line_start + 1
+                # For multiline, skip leading whitespace/newlines in line_content
+                if not line_content.strip():
+                    # Find the next non-empty line
+                    lines = lexdata.splitlines()
+                    for i, l in enumerate(lines, 1):
+                        if l.strip() and i >= line:
+                            line_content = l
+                            line = i
+                            line_start = lexdata.find(l)
+                            col = pos - line_start + 1
+                            break
+                pointer = ' ' * (col - 1) + '^'
+                context = next(
+                    (msg for ctx, msg in self.error_contexts.items() if ctx in t.type),
+                    f"Illegal character '{value[0]}'"
+                )
+                error_msg = (
+                    f"Lexical error at line {line}, column {col}:\n"
+                    f"{line_content}\n"
+                    f"{pointer}\n"
+                    f"{context}"
+                )
+            except Exception:
+                # Fallback if we can't get line context
+                value = getattr(t, 'value', '?')
+                pos = getattr(t, 'lexpos', '?')
+                line = getattr(t, 'lineno', '?')
+                error_msg = (
+                    f"Lexical error at line {line}, position {pos}: "
+                    f"Illegal character '{value[0] if value else '?'}'"
+                )
+            raise ValueError(error_msg)
         return t_error
 
     def create_parser_error_function(self) -> callable:

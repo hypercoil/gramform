@@ -166,3 +166,37 @@ def test_reserved_words():
 
     assert result.name == 'EXECUTION_HEAD'
     assert len(result.parameters) == 1
+
+
+def test_lexer_error_reporting():
+    """Test that lexer errors provide detailed context."""
+    grammar = MinimalGrammar()
+    lexer = grammar._lexer
+
+    # Test invalid character
+    with pytest.raises(ValueError) as exc_info:
+        lexer.input("x + @ y")
+        list(lexer)
+    error_msg = str(exc_info.value)
+    assert "Lexical error at line 1, column 5:" in error_msg
+    assert "x + @ y" in error_msg
+    assert "    ^" in error_msg
+    assert "Illegal character '@'" in error_msg
+
+    # Test invalid number format
+    with pytest.raises(ValueError) as exc_info:
+        lexer.input("x + 1.2.3")
+        list(lexer)
+    error_msg = str(exc_info.value)
+    assert "Lexical error at line 1, column 8:" in error_msg
+    assert "x + 1.2.3" in error_msg
+    assert "       ^" in error_msg
+
+    # Test invalid variable name
+    with pytest.raises(ValueError) as exc_info:
+        lexer.input("x + 1@var")
+        list(lexer)
+    error_msg = str(exc_info.value)
+    assert "Lexical error at line 1, column 6:" in error_msg
+    assert "x + 1@var" in error_msg
+    assert "     ^" in error_msg
