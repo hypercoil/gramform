@@ -11,16 +11,20 @@ from typing import Tuple
 
 from gramform.core import (
     Associativity,
+    binop_infix,
+    enter_group,
     DynamicGrammar,
     GrammarComponent,
     GrammarErrorHandler,
     Literal,
+    literal,
     pop_state_and_return,
     precedence_from_sequence,
     Primitive,
     ProductionRule,
     push_state_and_return,
     Token,
+    unop_prefix,
 )
 
 
@@ -127,31 +131,34 @@ class BasicOperatorsComponent(GrammarComponent):
             r'\+',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='OPERATOR',
         ),
         Token(
             'RANGE',
             r'\-',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='OPERATOR',
         ),
         Token(
             'ENUM_SEP',
             r',',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='DELIMITER',
         ),
 
         # Parentheses and brackets
-        Token('LPAREN', r'\('),
-        Token('RPAREN', r'\)'),
-        Token('LBRACKET', r'\['),
-        Token('RBRACKET', r'\]'),
-        Token('LBRACE', r'\{'),
-        Token('RBRACE', r'\}'),
+        Token('LPAREN', r'\(', category='PARENTHESIS'),
+        Token('RPAREN', r'\)', category='PARENTHESIS'),
+        Token('LBRACKET', r'\[', category='BRACKET'),
+        Token('RBRACKET', r'\]', category='BRACKET'),
+        Token('LBRACE', r'\{', category='BRACE'),
+        Token('RBRACE', r'\}', category='BRACE'),
 
         # Numbers
-        Token('FLOAT', r'\d+\.\d*'),
-        Token('INTEGER', r'\d+'),
+        Token('FLOAT', r'\d+\.\d*', category='LITERAL'),
+        Token('INTEGER', r'\d+', category='LITERAL'),
 
         # Whitespace
         Token('ignore', ' \t'),
@@ -164,36 +171,36 @@ class BasicOperatorsComponent(GrammarComponent):
         ProductionRule(
             'p_expression_concatenate',
             'expression : expression CONCATENATE expression',
-            lambda left, _, right: CONCATENATE.bind(left, right)
+            binop_infix(CONCATENATE),
         ),
         ProductionRule(
             'p_expression_range',
             'expression : expression RANGE expression',
-            lambda left, _, right: RANGE.bind(left, right)
+            binop_infix(RANGE),
         ),
         ProductionRule(
             'p_expression_enum',
             'expression : expression ENUM_SEP expression',
-            lambda left, _, right: ENUM.bind(left, right)
+            binop_infix(ENUM),
         ),
 
         # Parentheses
         ProductionRule(
             'p_expression_paren_term',
             'expression : LPAREN expression RPAREN',
-            lambda _, inner, __: inner
+            enter_group(),
         ),
 
         # Numbers
         ProductionRule(
             'p_expression_term_integer',
             'expression : INTEGER',
-            lambda terminal: Literal.create(int(terminal), int)
+            literal(int),
         ),
         ProductionRule(
             'p_expression_term_float',
             'expression : FLOAT',
-            lambda terminal: Literal.create(float(terminal), float)
+            literal(float),
         ),
     )
 
@@ -207,36 +214,42 @@ class ConditionComponent(GrammarComponent):
             r'=',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='CONDITION',
         ),
         Token(
             'CONDITION_NOT_EQUAL',
             r'(<>|!=|~=)',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='CONDITION',
         ),
         Token(
             'CONDITION_LESS',
             r'<',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='CONDITION',
         ),
         Token(
             'CONDITION_LESS_EQUAL',
             r'<=',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='CONDITION',
         ),
         Token(
             'CONDITION_GREATER',
             r'>',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='CONDITION',
         ),
         Token(
             'CONDITION_GREATER_EQUAL',
             r'>=',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='CONDITION',
         ),
     )
 
@@ -244,32 +257,32 @@ class ConditionComponent(GrammarComponent):
         ProductionRule(
             'p_expression_condition_equal',
             'expression : expression CONDITION_EQUAL expression',
-            lambda left, _, right: CONDITION_EQUAL.bind(left, right)
+            binop_infix(CONDITION_EQUAL),
         ),
         ProductionRule(
             'p_expression_condition_not_equal',
             'expression : expression CONDITION_NOT_EQUAL expression',
-            lambda left, _, right: CONDITION_NOT_EQUAL.bind(left, right)
+            binop_infix(CONDITION_NOT_EQUAL),
         ),
         ProductionRule(
             'p_expression_condition_less',
             'expression : expression CONDITION_LESS expression',
-            lambda left, _, right: CONDITION_LESS.bind(left, right)
+            binop_infix(CONDITION_LESS),
         ),
         ProductionRule(
             'p_expression_condition_less_equal',
             'expression : expression CONDITION_LESS_EQUAL expression',
-            lambda left, _, right: CONDITION_LESS_EQUAL.bind(left, right)
+            binop_infix(CONDITION_LESS_EQUAL),
         ),
         ProductionRule(
             'p_expression_condition_greater',
             'expression : expression CONDITION_GREATER expression',
-            lambda left, _, right: CONDITION_GREATER.bind(left, right)
+            binop_infix(CONDITION_GREATER),
         ),
         ProductionRule(
             'p_expression_condition_greater_equal',
             'expression : expression CONDITION_GREATER_EQUAL expression',
-            lambda left, _, right: CONDITION_GREATER_EQUAL.bind(left, right)
+            binop_infix(CONDITION_GREATER_EQUAL),
         ),
     )
 
@@ -283,48 +296,56 @@ class BooleanLogicComponent(GrammarComponent):
             r'\|\|',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='LOGICAL_OPERATOR',
         ),
         Token(
             'INTERSECTION',
             r'\&\&',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='LOGICAL_OPERATOR',
         ),
         Token(
             'NEGATION',
             r'!',
             precedence=from_sequence,
             associativity=Associativity.RIGHT,
+            category='LOGICAL_OPERATOR',
         ),
         Token(
             'INDICATOR',
             r'I_',
             is_reserved=True,
             precedence=from_sequence,
+            category='FUNCTION',
         ),
         Token(
             'INTERSECTION_REDUCE',
             r'AND_',
             is_reserved=True,
             precedence=from_sequence,
+            category='FUNCTION',
         ),
         Token(
             'UNION_REDUCE',
             r'OR_',
             is_reserved=True,
             precedence=from_sequence,
+            category='FUNCTION',
         ),
         Token(
             'NEGATION_SURFACE',
             r'NOT_',
             is_reserved=True,
             precedence=from_sequence,
+            category='FUNCTION',
         ),
         Token(
             'SCATTER',
             r'\:\:\:',
             precedence=1,
             associativity=Associativity.RIGHT,
+            category='OPERATOR',
         ),
     )
 
@@ -332,22 +353,22 @@ class BooleanLogicComponent(GrammarComponent):
         ProductionRule(
             'p_expression_union',
             'expression : expression UNION expression',
-            lambda left, _, right: UNION.bind(left, right)
+            binop_infix(UNION),
         ),
         ProductionRule(
             'p_expression_intersection',
             'expression : expression INTERSECTION expression',
-            lambda left, _, right: INTERSECTION.bind(left, right)
+            binop_infix(INTERSECTION),
         ),
         ProductionRule(
             'p_expression_negation',
             'expression : NEGATION expression',
-            lambda _, right: NEGATION.bind(right)
+            unop_prefix(NEGATION),
         ),
         ProductionRule(
             'p_expression_indicator',
             'expression : INDICATOR parameter',
-            lambda _, parameter: INDICATOR.bind(parameter)
+            unop_prefix(INDICATOR),
         ),
         ProductionRule(
             'p_expression_intersection_reduce',
@@ -367,7 +388,7 @@ class BooleanLogicComponent(GrammarComponent):
         ProductionRule(
             'p_expression_scatter',
             'expression : SCATTER expression',
-            lambda _, right: SCATTER.bind(right)
+            unop_prefix(SCATTER),
         ),
     )
 
@@ -383,12 +404,14 @@ class ParameterComponent(GrammarComponent):
             r'\{\{',
             function=push_state_and_return('param'),
             precedence=from_sequence,
+            category='PARAMETER',
         ),
         Token(
             'end_param',
             r'\}\}',
             function=pop_state_and_return,
             precedence=from_sequence,
+            category='PARAMETER',
         ),
         Token(
             'ARG_SEP',
@@ -396,6 +419,7 @@ class ParameterComponent(GrammarComponent):
             state='param',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='DELIMITER',
         ),
         Token(
             'KV_SEP',
@@ -403,6 +427,7 @@ class ParameterComponent(GrammarComponent):
             state='param',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='ASSIGNMENT',
         ),
     )
 
@@ -414,7 +439,7 @@ class ParameterComponent(GrammarComponent):
         ProductionRule(
             'p_expression_parameter',
             'parameter : LBRACKET expression RBRACKET',
-            lambda _, inner, __: inner
+            enter_group(),
         ),
         ProductionRule(
             'p_expression_parameterisation',
@@ -436,7 +461,7 @@ class ParameterComponent(GrammarComponent):
         ProductionRule(
             'p_param_expr_key_val',
             'expression : expression KV_SEP expression',
-            lambda left, _, right: ASSIGNMENT.bind(left, right)
+            binop_infix(ASSIGNMENT),
         ),
     )
 
@@ -451,6 +476,7 @@ class VariableComponent(GrammarComponent):
             r'[a-zA-Z_][a-zA-Z0-9_]*',
             function=variable,
             precedence=from_sequence,
+            category='IDENTIFIER',
         ),
     )
 
@@ -473,36 +499,42 @@ class SpecialOperatorsComponent(GrammarComponent):
             r'\^',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='OPERATOR',
         ),
         Token(
             'POWER_INCLUSIVE',
             r'\^\^',
             precedence=from_sequence,
             associativity=Associativity.LEFT,
+            category='OPERATOR',
         ),
         Token(
             'BACKDIFF',
             r'd_',
             is_reserved=True,
             precedence=from_sequence,
+            category='FUNCTION',
         ),
         Token(
             'BACKDIFF_INCLUSIVE',
             r'dd_',
             is_reserved=True,
             precedence=from_sequence,
+            category='FUNCTION',
         ),
         Token(
             'FIRST_N',
             r'n_',
             is_reserved=True,
             precedence=from_sequence,
+            category='FUNCTION',
         ),
         Token(
             'CUMUL_VAR',
             r'v_',
             is_reserved=True,
             precedence=from_sequence,
+            category='FUNCTION',
         ),
     )
 
@@ -510,7 +542,7 @@ class SpecialOperatorsComponent(GrammarComponent):
         ProductionRule(
             'p_expression_power',
             'expression : expression POWER expression',
-            lambda left, _, right: POWER.bind(left, right)
+            binop_infix(POWER),
         ),
         ProductionRule(
             'p_expression_power_inclusive',
@@ -536,12 +568,12 @@ class SpecialOperatorsComponent(GrammarComponent):
         ProductionRule(
             'p_expression_first_n',
             'expression : FIRST_N parameter',
-            lambda _, parameter: FIRST_N.bind(parameter)
+            unop_prefix(FIRST_N),
         ),
         ProductionRule(
             'p_expression_cumul_var',
             'expression : CUMUL_VAR parameter',
-            lambda _, parameter: CUMUL_VAR.bind(parameter)
+            unop_prefix(CUMUL_VAR),
         ),
     )
 
@@ -561,14 +593,18 @@ class MinimalGrammar(DynamicGrammar):
             ),
             error_handler=GrammarErrorHandler(
                 error_contexts={
-                    'PARAM': "Invalid parameter syntax",
-                    'VARIABLE': "Invalid variable name",
+                    'PARAMETER': "Invalid parameter syntax",
+                    'IDENTIFIER': "Invalid variable name",
                     'OPERATOR': "Invalid operator usage",
+                    'LOGICAL_OPERATOR': "Invalid logical operator usage",
                     'CONDITION': "Invalid condition expression",
                     'PARENTHESIS': "Mismatched parentheses",
                     'BRACKET': "Mismatched brackets",
                     'BRACE': "Mismatched braces",
-                    'NUMBER': "Invalid number format",
+                    'LITERAL': "Invalid number format",
+                    'FUNCTION': "Invalid function usage",
+                    'DELIMITER': "Invalid delimiter usage",
+                    'ASSIGNMENT': "Invalid assignment syntax",
                     'RESERVED': "Invalid use of reserved word",
                 }
             )
