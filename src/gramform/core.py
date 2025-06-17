@@ -179,6 +179,48 @@ class NotInCache:
     pass
 
 
+def literal(dtype: Type):
+    def _inner(value):
+        return Literal.create(dtype(value), dtype)
+    return _inner
+
+
+def unop_prefix(prim: Primitive):
+    def _inner(_, right):
+        return prim.bind(right)
+    return _inner
+
+
+def unop_postfix(prim: Primitive):
+    def _inner(left, _):
+        return prim.bind(left)
+    return _inner
+
+
+def binop_infix(prim: Primitive):
+    def _inner(left, _, right):
+        return prim.bind(left, right)
+    return _inner
+
+
+def binop_prefix(prim: Primitive):
+    def _inner(_, left, right):
+        return prim.bind(left, right)
+    return _inner
+
+
+def binop_postfix(prim: Primitive):
+    def _inner(left, right, _):
+        return prim.bind(left, right)
+    return _inner
+
+
+def enter_group():
+    def _inner(_, inner, __):
+        return inner
+    return _inner
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class TransformationContext:
     cache: Mapping[Primitive, Any] = dataclasses.field(default_factory=dict)
