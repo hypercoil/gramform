@@ -51,13 +51,13 @@ def precedence_from_sequence(
 
 
 def push_state_and_return(state: str):
-    def _inner(t):
+    def _inner(t, grammar):
         t.lexer.push_state(state)
         return t
     return _inner
 
 
-def pop_state_and_return(t):
+def pop_state_and_return(t, grammar):
     t.lexer.pop_state()
     return t
 
@@ -332,7 +332,7 @@ class InterpretersDispatch:
 
 @dataclasses.dataclass(frozen=True)
 class Processor:
-    grammar: Type[Grammar]
+    grammar: "DynamicGrammar"
     preprocessors: Tuple[Mapping[str, str] | callable, ...]
     postprocessors: Tuple[callable, ...]
     interpreters: InterpretersDispatch
@@ -340,6 +340,8 @@ class Processor:
     default_interpreter: str | None = None
 
     def __post_init__(self):
+        if isinstance(self.grammar, Type[DynamicGrammar]):
+            object.__setattr__(self, 'grammar', self.grammar())
         postprocessors = self.postprocessors
         if ppr_execution_head not in postprocessors:
             postprocessors = list(postprocessors) + [ppr_execution_head]
@@ -460,8 +462,6 @@ class ProductionRule:
 
     def __post_init__(self):
         """Validate the production rule."""
-        if not self.name.startswith('p_'):
-            raise ValueError("Production function names must start with 'p_'")
         if ':' not in self.rule:
             raise ValueError(
                 "Production rule must contain ':' to separate LHS and RHS"
@@ -470,13 +470,14 @@ class ProductionRule:
     def __repr__(self):
         return wl.pformat(self)
 
-    def materialise(self) -> callable:
+    def materialise(self, grammar: 'DynamicGrammar') -> callable:
         """Create a PLY-compatible production function."""
         def production_func(p):
             p[0] = self.implementation(*p[1:])
-        production_func.__name__ = self.name
+        name = f'p_{self.name}'
+        production_func.__name__ = name
         production_func.__doc__ = self.rule
-        return production_func
+        return name, production_func
 
 
 class Associativity(Enum):
@@ -568,7 +569,7 @@ class Token:
         """
         return generate_valid_completion(self.regex)
 
-    def materialise(self) -> Tuple[str, Callable | str]:
+    def materialise(self, grammar: 'DynamicGrammar') -> Tuple[str, Callable | str]:
         """Create a PLY-compatible token function or regex."""
         if self.state:
             state_name = f'{self.state}_'
@@ -579,7 +580,10 @@ class Token:
         if not self.function:
             return name, self.regex
 
-        func = self.function
+        def token_func(t):
+            return self.function(t, grammar)
+
+        func = token_func
         func.__name__ = name
         func.__doc__ = self.regex
         return name, func
@@ -749,11 +753,11 @@ class DynamicGrammar(Grammar):
 
         # Register production rules
         for rule in base.production_rules:
-            setattr(self, rule.name, rule.materialise())
+            setattr(self, *rule.materialise(self))
 
         # Register token rules
         for token in base.tokens:
-            setattr(self, *token.materialise())
+            setattr(self, *token.materialise(self))
 
         # Load or generate example values
         try:
@@ -799,7 +803,7 @@ class DynamicGrammar(Grammar):
         )
         # Build reserved words mapping
         reserved = {
-            token.name: token.name
+            token.regex: token.name
             for token in base.tokens
             if token.is_reserved
         }

@@ -68,18 +68,6 @@ def confound_formula_preprocessor():
     }
 
 
-_RESERVED = {
-    'I_': 'INDICATOR',
-    'd_': 'BACKDIFF',
-    'dd_': 'BACKDIFF_INCLUSIVE',
-    'AND_': 'INTERSECTION_REDUCE',
-    'OR_': 'UNION_REDUCE',
-    'NOT_': 'NEGATION_SURFACE',
-    'n_': 'FIRST_N',
-    'v_': 'CUMUL_VAR',
-}
-
-
 TOKEN_PRECEDENCE = (
     "CONCATENATE",
     ("SCATTER", "CUMUL_VAR", "FIRST_N"),
@@ -114,10 +102,9 @@ TOKEN_PRECEDENCE = (
 from_sequence = precedence_from_sequence(TOKEN_PRECEDENCE)
 
 
-def variable(t):
+def variable(t, grammar):
     """Handle variable tokens and reserved words."""
-    if t.value in _RESERVED:
-        t.type = _RESERVED[t.value]
+    t.type = grammar.reserved.get(t.value, t.type)
     return t
 
 
@@ -169,36 +156,36 @@ class BasicOperatorsComponent(GrammarComponent):
     production_rules: Tuple[ProductionRule, ...] = (
         # Basic arithmetic
         ProductionRule(
-            'p_expression_concatenate',
+            'expression_concatenate',
             'expression : expression CONCATENATE expression',
             binop_infix(CONCATENATE),
         ),
         ProductionRule(
-            'p_expression_range',
+            'expression_range',
             'expression : expression RANGE expression',
             binop_infix(RANGE),
         ),
         ProductionRule(
-            'p_expression_enum',
+            'expression_enum',
             'expression : expression ENUM_SEP expression',
             binop_infix(ENUM),
         ),
 
         # Parentheses
         ProductionRule(
-            'p_expression_paren_term',
+            'expression_paren_term',
             'expression : LPAREN expression RPAREN',
             enter_group(),
         ),
 
         # Numbers
         ProductionRule(
-            'p_expression_term_integer',
+            'expression_term_integer',
             'expression : INTEGER',
             literal(int),
         ),
         ProductionRule(
-            'p_expression_term_float',
+            'expression_term_float',
             'expression : FLOAT',
             literal(float),
         ),
@@ -255,32 +242,32 @@ class ConditionComponent(GrammarComponent):
 
     production_rules: Tuple[ProductionRule, ...] = (
         ProductionRule(
-            'p_expression_condition_equal',
+            'expression_condition_equal',
             'expression : expression CONDITION_EQUAL expression',
             binop_infix(CONDITION_EQUAL),
         ),
         ProductionRule(
-            'p_expression_condition_not_equal',
+            'expression_condition_not_equal',
             'expression : expression CONDITION_NOT_EQUAL expression',
             binop_infix(CONDITION_NOT_EQUAL),
         ),
         ProductionRule(
-            'p_expression_condition_less',
+            'expression_condition_less',
             'expression : expression CONDITION_LESS expression',
             binop_infix(CONDITION_LESS),
         ),
         ProductionRule(
-            'p_expression_condition_less_equal',
+            'expression_condition_less_equal',
             'expression : expression CONDITION_LESS_EQUAL expression',
             binop_infix(CONDITION_LESS_EQUAL),
         ),
         ProductionRule(
-            'p_expression_condition_greater',
+            'expression_condition_greater',
             'expression : expression CONDITION_GREATER expression',
             binop_infix(CONDITION_GREATER),
         ),
         ProductionRule(
-            'p_expression_condition_greater_equal',
+            'expression_condition_greater_equal',
             'expression : expression CONDITION_GREATER_EQUAL expression',
             binop_infix(CONDITION_GREATER_EQUAL),
         ),
@@ -351,42 +338,42 @@ class BooleanLogicComponent(GrammarComponent):
 
     production_rules: Tuple[ProductionRule, ...] = (
         ProductionRule(
-            'p_expression_union',
+            'expression_union',
             'expression : expression UNION expression',
             binop_infix(UNION),
         ),
         ProductionRule(
-            'p_expression_intersection',
+            'expression_intersection',
             'expression : expression INTERSECTION expression',
             binop_infix(INTERSECTION),
         ),
         ProductionRule(
-            'p_expression_negation',
+            'expression_negation',
             'expression : NEGATION expression',
             unop_prefix(NEGATION),
         ),
         ProductionRule(
-            'p_expression_indicator',
+            'expression_indicator',
             'expression : INDICATOR parameter',
             unop_prefix(INDICATOR),
         ),
         ProductionRule(
-            'p_expression_intersection_reduce',
+            'expression_intersection_reduce',
             'expression : INTERSECTION_REDUCE LPAREN expression RPAREN',
             lambda _, __, right, ___: INTERSECTION_REDUCE.bind(right)
         ),
         ProductionRule(
-            'p_expression_union_reduce',
+            'expression_union_reduce',
             'expression : UNION_REDUCE LPAREN expression RPAREN',
             lambda _, __, right, ___: UNION_REDUCE.bind(right)
         ),
         ProductionRule(
-            'p_expression_negation_surface',
+            'expression_negation_surface',
             'expression : NEGATION_SURFACE LPAREN expression RPAREN',
             lambda _, __, right, ___: INDICATOR.bind(NEGATION.bind(right))
         ),
         ProductionRule(
-            'p_expression_scatter',
+            'expression_scatter',
             'expression : SCATTER expression',
             unop_prefix(SCATTER),
         ),
@@ -437,12 +424,12 @@ class ParameterComponent(GrammarComponent):
 
     production_rules: Tuple[ProductionRule, ...] = (
         ProductionRule(
-            'p_expression_parameter',
+            'expression_parameter',
             'parameter : LBRACKET expression RBRACKET',
             enter_group(),
         ),
         ProductionRule(
-            'p_expression_parameterisation',
+            'expression_parameterisation',
             'parameter : begin_param expression end_param',
             lambda _, inner, __: (
                 COLLECT_PARAMETERS.bind(*inner)
@@ -451,7 +438,7 @@ class ParameterComponent(GrammarComponent):
             )
         ),
         ProductionRule(
-            'p_param_expr',
+            'param_expr',
             'expression : expression ARG_SEP expression',
             lambda left, _, right: COLLECT_PARAMETERS.bind(*(
                 tuple(left if isinstance(left, tuple) else (left,)) +
@@ -459,7 +446,7 @@ class ParameterComponent(GrammarComponent):
             ))
         ),
         ProductionRule(
-            'p_param_expr_key_val',
+            'param_expr_key_val',
             'expression : expression KV_SEP expression',
             binop_infix(ASSIGNMENT),
         ),
@@ -482,7 +469,7 @@ class VariableComponent(GrammarComponent):
 
     production_rules: Tuple[ProductionRule, ...] = (
         ProductionRule(
-            'p_expression_term_variable',
+            'expression_term_variable',
             'expression : VARIABLE',
             lambda terminal: VARIABLE.bind(terminal)
         ),
@@ -540,12 +527,12 @@ class SpecialOperatorsComponent(GrammarComponent):
 
     production_rules: Tuple[ProductionRule, ...] = (
         ProductionRule(
-            'p_expression_power',
+            'expression_power',
             'expression : expression POWER expression',
             binop_infix(POWER),
         ),
         ProductionRule(
-            'p_expression_power_inclusive',
+            'expression_power_inclusive',
             'expression : expression POWER_INCLUSIVE expression',
             lambda left, _, right: POWER.bind(left, RANGE.bind(
                 Literal.create(1, int),
@@ -553,12 +540,12 @@ class SpecialOperatorsComponent(GrammarComponent):
             ))
         ),
         ProductionRule(
-            'p_expression_backdiff',
+            'expression_backdiff',
             'expression : BACKDIFF parameter LPAREN expression RPAREN',
             lambda _, parameter, __, inner, ___: BACKDIFF.bind(inner, parameter)
         ),
         ProductionRule(
-            'p_expression_backdiff_inclusive',
+            'expression_backdiff_inclusive',
             'expression : BACKDIFF_INCLUSIVE parameter LPAREN expression RPAREN',
             lambda _, parameter, __, inner, ___: BACKDIFF.bind(inner, RANGE.bind(
                 Literal.create(0, int),
@@ -566,12 +553,12 @@ class SpecialOperatorsComponent(GrammarComponent):
             ))
         ),
         ProductionRule(
-            'p_expression_first_n',
+            'expression_first_n',
             'expression : FIRST_N parameter',
             unop_prefix(FIRST_N),
         ),
         ProductionRule(
-            'p_expression_cumul_var',
+            'expression_cumul_var',
             'expression : CUMUL_VAR parameter',
             unop_prefix(CUMUL_VAR),
         ),
@@ -607,5 +594,5 @@ class MinimalGrammar(DynamicGrammar):
                     'ASSIGNMENT': "Invalid assignment syntax",
                     'RESERVED': "Invalid use of reserved word",
                 }
-            )
+            ),
         )
