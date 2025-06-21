@@ -23,7 +23,7 @@ from gramform.core import (
     InterpretersDispatch,
     Processor,
 )
-from gramform.grammar.minimal import (
+from gramform.grammars.minimaltest.grammar import (
     MinimalGrammar,
     confound_formula_preprocessor,
 )

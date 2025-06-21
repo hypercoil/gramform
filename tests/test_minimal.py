@@ -3,7 +3,7 @@ Tests for the minimal grammar implementation.
 """
 import pytest
 from gramform.core import TransformationContext, ppr_execution_head
-from gramform.grammar.minimal import (
+from gramform.grammars.minimaltest.grammar import (
     MinimalGrammar,
 )
 from gramform.postprocessors import (
