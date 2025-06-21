@@ -44,10 +44,32 @@ def precedence_from_sequence(
             for t in token:
                 precedence[t] = i
 
+    before_index_default, after_index_default = 0, len(sequence)
+
     def from_sequence(token: str) -> int:
         return precedence.get(token, default)
 
-    return from_sequence
+    def with_precedence(
+        after: str | None = None,
+        before: str | None = None,
+    ) -> int:
+        if before is None and after is None:
+            raise ValueError("Either before or after must be provided")
+        before_index, after_index = before_index_default, after_index_default
+        if before is not None:
+            before_index = from_sequence(before)
+        if after is not None:
+            after_index = from_sequence(after)
+        if after_index < before_index:
+            raise ValueError(
+                f"Precedence after {after} and before {before} is not "
+                f"satisfiable because {after} has a lower precedence than "
+                f"{before}."
+            )
+        precedence[token] = (after_index + before_index) / 2
+        return from_sequence(token)
+
+    return from_sequence, with_precedence
 
 
 def push_state_and_return(state: str):
@@ -62,20 +84,157 @@ def pop_state_and_return(t, grammar):
     return t
 
 
-@dataclasses.dataclass(frozen=True)
-class Grammar:
-    """Subclass this and follow the `ply` tutorial
-    (https://www.dabeaz.com/ply/ply.html)
-    to create a new grammar."""
+def literal(dtype: Type):
+    """
+    A production rule pattern used for literals.
 
-    @classmethod
-    def __lexer__(cls, **params):
-        return lex.lex(module=cls, **params)
+    Pattern:
+    construct : LITERAL
+    """
+    def _inner(value):
+        return Literal.create(dtype(value), dtype)
+    return _inner
 
-    @classmethod
-    def __parser__(cls, **params):
-        lexer = lex.lex(module=cls, **params)
-        return yacc.yacc(module=cls, **params)
+
+def unop_prefix(prim: "Primitive"):
+    """
+    A production rule pattern frequently used for unary prefix operations.
+
+    Pattern:
+    construct : OPERATOR construct
+    """
+    def _inner(_, right):
+        return prim.bind(right)
+    return _inner
+
+
+def unop_postfix(prim: "Primitive"):
+    """
+    A production rule pattern frequently used for unary postfix operations.
+
+    Pattern:
+    construct : construct OPERATOR
+    """
+    def _inner(left, _):
+        return prim.bind(left)
+    return _inner
+
+
+def binop_infix(prim: "Primitive"):
+    """
+    A production rule pattern frequently used for binary infix operations.
+
+    Pattern:
+    construct : construct_left OPERATOR construct_right
+    """
+    def _inner(left, _, right):
+        return prim.bind(left, right)
+    return _inner
+
+
+def binop_prefix(prim: "Primitive"):
+    """
+    A production rule pattern frequently used for binary prefix operations.
+
+    Pattern:
+    construct : OPERATOR construct_left construct_right
+    """
+    def _inner(_, left, right):
+        return prim.bind(left, right)
+    return _inner
+
+
+def binop_postfix(prim: "Primitive"):
+    """
+    A production rule pattern frequently used for binary postfix operations.
+
+    Pattern:
+    construct : construct_left construct_right OPERATOR
+    """
+    def _inner(left, right, _):
+        return prim.bind(left, right)
+    return _inner
+
+
+def enter_group():
+    """
+    A production rule pattern used for grouping.
+
+    Pattern:
+    construct : LPAREN construct RPAREN
+    """
+    def _inner(_, inner, __):
+        return inner
+    return _inner
+
+
+def unit_lift():
+    """
+    A production rule pattern used for lifting one kind of construct into
+    another.
+
+    Pattern:
+    construct : construct
+    """
+    def _inner(inner):
+        return inner
+    return _inner
+
+
+def named_function_call(prim: "Primitive"):
+    """
+    A production rule pattern frequently used for function calls.
+
+    Pattern:
+    construct : NAME LPAREN construct RPAREN
+    """
+    def _inner(_, __, expr, ___):
+        return prim.bind(expr)
+    return _inner
+
+
+def named_function_bind(prim: "Primitive"):
+    """
+    A production rule pattern frequently used for function calls.
+
+    Pattern:
+    construct : name LPAREN construct RPAREN
+    """
+    def _inner(name, _, expr, __):
+        return prim.bind(name, expr)
+    return _inner
+
+
+def config_primitives():
+    """
+    Configure a registry of primitives.
+
+    Returns
+    -------
+    constructor: callable
+        An alternative constructor for the `Primitive` class that
+        automatically includes the primitive in the registry.
+    registry: dict
+        A registry of primitives.
+    """
+    registry = {}
+    def _inner(
+        name: str,
+        parameters: Tuple[Any, ...] = (),
+        is_associative: bool = False,
+        is_terminal: bool = False,
+    ):
+        if name in registry:
+            raise ValueError(f"Primitive {name} already registered")
+        prim = Primitive(
+            name=name,
+            parameters=parameters,
+            is_associative=is_associative,
+            is_terminal=is_terminal,
+        )
+        registry[name] = prim
+        return prim
+    return _inner, registry
 
 
 @dataclasses.dataclass(frozen=True)
@@ -177,48 +336,6 @@ class NotEvaluated:
 class NotInCache:
     """Sentinel value for primitives not in the cache."""
     pass
-
-
-def literal(dtype: Type):
-    def _inner(value):
-        return Literal.create(dtype(value), dtype)
-    return _inner
-
-
-def unop_prefix(prim: Primitive):
-    def _inner(_, right):
-        return prim.bind(right)
-    return _inner
-
-
-def unop_postfix(prim: Primitive):
-    def _inner(left, _):
-        return prim.bind(left)
-    return _inner
-
-
-def binop_infix(prim: Primitive):
-    def _inner(left, _, right):
-        return prim.bind(left, right)
-    return _inner
-
-
-def binop_prefix(prim: Primitive):
-    def _inner(_, left, right):
-        return prim.bind(left, right)
-    return _inner
-
-
-def binop_postfix(prim: Primitive):
-    def _inner(left, right, _):
-        return prim.bind(left, right)
-    return _inner
-
-
-def enter_group():
-    def _inner(_, inner, __):
-        return inner
-    return _inner
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -487,6 +604,171 @@ class Associativity(Enum):
     NONE = auto()  # For non-operator tokens
 
 
+@dataclasses.dataclass
+class Namespaces:
+    """
+    A collection of token namespaces for organising reserved words and other
+    token categories.
+
+    A namespace is a mapping from regex patterns to token names, allowing
+    for flexible organization of tokens into different categories (e.g.,
+    reserved words, operators, literals, etc.).
+
+    Parameters
+    ----------
+    namespaces: Dict[str, Dict[str, str]]
+        A mapping from namespace names to mappings of regex patterns to
+        token names. When tokens don't explicitly specify a namespace, they
+        are placed in the default namespace for their state; if they don't
+        have an explicit state, they are placed in the default namespace for
+        the grammar.
+    default_namespace: str
+        The name of the default namespace for tokens that don't specify
+        a namespace explicitly.
+    """
+    namespaces: Dict[str, Dict[str, str]] = dataclasses.field(
+        default_factory=dict
+    )
+    default_namespace: str = "default"
+
+    def __post_init__(self):
+        """Validate the namespaces."""
+        if not isinstance(self.namespaces, dict):
+            raise ValueError("Namespaces must be a dictionary")
+        
+        for namespace_name, namespace_mapping in self.namespaces.items():
+            if not isinstance(namespace_name, str):
+                raise ValueError("Namespace names must be strings")
+            if not isinstance(namespace_mapping, dict):
+                raise ValueError("Namespace mappings must be dictionaries")
+            for regex, token_name in namespace_mapping.items():
+                if not isinstance(regex, str):
+                    raise ValueError("Regex patterns must be strings")
+                if not isinstance(token_name, str):
+                    raise ValueError("Token names must be strings")
+
+    def add_token(
+        self,
+        namespace: str,
+        regex: str,
+        token_name: str,
+    ) -> 'Namespaces':
+        """
+        Add a token to a specific namespace.
+
+        Parameters
+        ----------
+        namespace: str
+            The namespace to add the token to.
+        regex: str
+            The regex pattern for the token.
+        token_name: str
+            The name of the token.
+
+        Returns
+        -------
+        Namespaces
+            A new Namespaces instance with the token added.
+        """
+        new_namespaces = dict(self.namespaces)
+        if namespace not in new_namespaces:
+            new_namespaces[namespace] = {}
+        new_namespaces[namespace] = {
+            **new_namespaces[namespace],
+            regex: token_name
+        }
+        self.namespaces = new_namespaces
+        return self
+
+    def add_namespace(
+        self,
+        namespace: str,
+        namespace_mapping: Dict[str, str] | None = None,
+    ) -> 'Namespaces':
+        """Add a namespace to the collection."""
+        new_namespaces = dict(self.namespaces)
+        new_namespaces[namespace] = namespace_mapping
+        self.namespaces = new_namespaces
+        return self
+
+    def get_namespace(self, namespace: str) -> Dict[str, str]:
+        """
+        Get all tokens in a specific namespace.
+
+        Parameters
+        ----------
+        namespace: str
+            The name of the namespace.
+
+        Returns
+        -------
+        Dict[str, str]
+            A mapping from regex patterns to token names in the namespace.
+        """
+        return self.namespaces.get(namespace, {})
+
+    def get_all_tokens(self) -> Dict[str, str]:
+        """
+        Get all tokens across all namespaces as a flat mapping.
+
+        Returns
+        -------
+        Dict[str, str]
+            A mapping from regex patterns to token names across all
+            namespaces.
+        """
+        all_tokens = {}
+        for namespace_mapping in self.namespaces.values():
+            all_tokens.update(namespace_mapping)
+        return all_tokens
+
+    def merge(self, other: 'Namespaces') -> 'Namespaces':
+        """
+        Merge this namespaces collection with another.
+
+        Parameters
+        ----------
+        other: Namespaces
+            The other namespaces collection to merge with.
+
+        Returns
+        -------
+        Namespaces
+            A new Namespaces instance containing tokens from both collections.
+        """
+        merged_namespaces = dict(self.namespaces)
+        for namespace_name, namespace_mapping in other.namespaces.items():
+            if namespace_name in merged_namespaces:
+                # Merge the mappings, with other taking precedence on conflicts
+                merged_namespaces[namespace_name] = {
+                    **merged_namespaces[namespace_name],
+                    **namespace_mapping
+                }
+            else:
+                merged_namespaces[namespace_name] = namespace_mapping
+
+        return dataclasses.replace(self, namespaces=merged_namespaces)
+
+    def __repr__(self):
+        return wl.pformat(self)
+
+    def __add__(self, other: 'Namespaces') -> 'Namespaces':
+        """Merge two namespaces collections."""
+        return self.merge(other)
+
+    def __getattr__(self, name: str) -> Dict[str, str]:
+        """Get a namespace by name."""
+        try:
+            namespaces = object.__getattribute__(self, 'namespaces')
+        except AttributeError:
+            return object.__getattribute__(self, name)
+        if name == 'namespaces':
+            return namespaces
+        if name in namespaces:
+            return self.get_namespace(name)
+        return object.__getattribute__(self, name)
+
+
 @dataclasses.dataclass(frozen=True)
 class Token:
     """
@@ -501,9 +783,9 @@ class Token:
     Parameters
     ----------
     name: str
-        The name of the token (e.g., 'CONCATENATE').
+        The name of the token (e.g., 'PLUS').
     regex: str
-        The regex pattern for the token (e.g., r'\+').
+        The regex pattern for the token (e.g., r'\\+').
     function: Optional[callable]
         An optional function to handle the token.
     state: Optional[str]
@@ -513,8 +795,11 @@ class Token:
         binding.
     associativity: Associativity
         The associativity of the token.
-    is_reserved: bool
-        Whether this is a reserved word.
+    namespace: Optional[str]
+        The namespace this token belongs to. If None, the token will be
+        placed in the default namespace for its state. Namespaces can be
+        used to group tokens together and disambiguate them, or to maintain
+        lists of reserved words.
     category: Optional[str]
         An optional category for error context matching.
     """
@@ -524,7 +809,7 @@ class Token:
     state: Optional[str] = None
     precedence: int = 0
     associativity: Associativity = Associativity.NONE
-    is_reserved: bool = False
+    namespace: Optional[str] = None
     category: Optional[str] = None
 
     def __post_init__(self):
@@ -558,6 +843,8 @@ class Token:
             raise ValueError(
                 "Token associativity must be an Associativity enum"
             )
+        if self.namespace is not None and not isinstance(self.namespace, str):
+            raise ValueError("Token namespace must be a string or None")
 
     def generate_example(self) -> str:
         """
@@ -569,7 +856,10 @@ class Token:
         """
         return generate_valid_completion(self.regex)
 
-    def materialise(self, grammar: 'DynamicGrammar') -> Tuple[str, Callable | str]:
+    def materialise(
+        self,
+        grammar: 'DynamicGrammar',
+    ) -> Tuple[str, Callable | str]:
         """Create a PLY-compatible token function or regex."""
         if self.state:
             state_name = f'{self.state}_'
@@ -661,12 +951,56 @@ class GrammarComponent:
         if conflicts:
             raise ValueError(f"Conflicting production rules: {conflicts}")
 
-        # Check for token conflicts
+        # Check for token name conflicts
         self_tokens = {token.name for token in self.tokens}
         other_tokens = {token.name for token in other.tokens}
         conflicts = self_tokens & other_tokens
         if conflicts:
             raise ValueError(f"Conflicting tokens: {conflicts}")
+
+        # Check for namespace conflicts (same regex in different namespaces)
+        #TODO: If this is too slow, we can either refactor to use a more
+        #      efficient data structure, or allow unsafe/skipping the check.
+        self_namespaces = {}
+        for token in self.tokens:
+            namespace = token.namespace or token.state or "default"
+            if namespace not in self_namespaces:
+                self_namespaces[namespace] = {}
+            self_namespaces[namespace][token.regex] = token.name
+
+        other_namespaces = {}
+        for token in other.tokens:
+            namespace = token.namespace or token.state or "default"
+            if namespace not in other_namespaces:
+                other_namespaces[namespace] = {}
+            other_namespaces[namespace][token.regex] = token.name
+
+        # Check for regex conflicts within the same namespace
+        for namespace in set(
+            self_namespaces.keys()
+        ) | set(
+            other_namespaces.keys()
+        ):
+            self_regexes = set(self_namespaces.get(namespace, {}).keys())
+            other_regexes = set(other_namespaces.get(namespace, {}).keys())
+            conflicts = self_regexes & other_regexes
+            if conflicts:
+                # Check if the conflicting regexes map to different token
+                # names
+                for regex in conflicts:
+                    self_name = self_namespaces.get(
+                        namespace,
+                        {},
+                    ).get(regex)
+                    other_name = other_namespaces.get(
+                        namespace,
+                        {},
+                    ).get(regex)
+                    if self_name != other_name:
+                        raise ValueError(
+                            f"Conflicting regex '{regex}' in namespace "
+                            f"'{namespace}': '{self_name}' vs '{other_name}'"
+                        )
 
         return dataclasses.replace(
             self,
@@ -681,7 +1015,7 @@ class GrammarComponent:
 
 
 @dataclasses.dataclass(frozen=True)
-class DynamicGrammar(Grammar):
+class DynamicGrammar:
     """A grammar composed from multiple components."""
     components: Tuple[GrammarComponent, ...]
     error_handler: GrammarErrorHandler = dataclasses.field(
@@ -704,6 +1038,10 @@ class DynamicGrammar(Grammar):
         init=False,
     )
     _parser: Optional[Any] = dataclasses.field(
+        default=None,
+        init=False,
+    )
+    _namespaces: Optional[Namespaces] = dataclasses.field(
         default=None,
         init=False,
     )
@@ -753,11 +1091,11 @@ class DynamicGrammar(Grammar):
 
         # Register production rules
         for rule in base.production_rules:
-            setattr(self, *rule.materialise(self))
+            object.__setattr__(self, *rule.materialise(self))
 
         # Register token rules
         for token in base.tokens:
-            setattr(self, *token.materialise(self))
+            object.__setattr__(self, *token.materialise(self))
 
         # Load or generate example values
         try:
@@ -791,23 +1129,34 @@ class DynamicGrammar(Grammar):
         )
 
         # Register error handlers
-        setattr(
+        object.__setattr__(
             self,
             't_error',
             self.error_handler.create_token_error_function(),
         )
-        setattr(
+        object.__setattr__(
             self,
             'p_error',
             self.error_handler.create_parser_error_function(),
         )
-        # Build reserved words mapping
-        reserved = {
-            token.regex: token.name
-            for token in base.tokens
-            if token.is_reserved
-        }
-        object.__setattr__(self, '_reserved', reserved)
+
+        # Build namespaces from tokens
+        namespaces = Namespaces()
+        for token in base.tokens:
+            if token.namespace is not None:
+                namespaces = namespaces.add_token(
+                    token.namespace, token.regex, token.name
+                )
+            elif token.state is not None:
+                namespaces = namespaces.add_token(
+                    token.state, token.regex, token.name
+                )
+            else:
+                # Add to default namespace
+                namespaces = namespaces.add_token(
+                    namespaces.default_namespace, token.regex, token.name
+                )
+        object.__setattr__(self, '_namespaces', namespaces)
 
         lexer = lex.lex(module=self)
         parser = yacc.yacc(module=self)
@@ -823,17 +1172,19 @@ class DynamicGrammar(Grammar):
     def __getattr__(self, name: str) -> Any:
         """Handle dynamic attribute access for PLY compatibility."""
         if name.startswith('t_'):
-            # Handle token patterns
-            if name in self._reserved:
-                return lambda t: self._reserved[name]
+            # Handle token patterns using namespaces
+            all_tokens = self._namespaces.get_all_tokens()
+            if name in all_tokens:
+                return lambda t: all_tokens[name]
         return super().__getattribute__(name)
 
     def __repr__(self):
         return wl.pformat(self)
 
     @property
-    def reserved(self) -> Dict[str, str]:
-        return self._reserved
+    def namespaces(self) -> Namespaces:
+        """Get the full namespaces collection."""
+        return self._namespaces
 
     def input(self, data: str) -> Any:
         """Lex the input data."""

@@ -99,12 +99,12 @@ TOKEN_PRECEDENCE = (
     "ARG_SEP",
     "KV_SEP",
 )
-from_sequence = precedence_from_sequence(TOKEN_PRECEDENCE)
+from_sequence, with_precedence = precedence_from_sequence(TOKEN_PRECEDENCE)
 
 
 def variable(t, grammar):
     """Handle variable tokens and reserved words."""
-    t.type = grammar.reserved.get(t.value, t.type)
+    t.type = grammar.namespaces.reserved.get(t.value, t.type)
     return t
 
 
@@ -302,28 +302,28 @@ class BooleanLogicComponent(GrammarComponent):
         Token(
             'INDICATOR',
             r'I_',
-            is_reserved=True,
+            namespace='reserved',
             precedence=from_sequence,
             category='FUNCTION',
         ),
         Token(
             'INTERSECTION_REDUCE',
             r'AND_',
-            is_reserved=True,
+            namespace='reserved',
             precedence=from_sequence,
             category='FUNCTION',
         ),
         Token(
             'UNION_REDUCE',
             r'OR_',
-            is_reserved=True,
+            namespace='reserved',
             precedence=from_sequence,
             category='FUNCTION',
         ),
         Token(
             'NEGATION_SURFACE',
             r'NOT_',
-            is_reserved=True,
+            namespace='reserved',
             precedence=from_sequence,
             category='FUNCTION',
         ),
@@ -498,28 +498,28 @@ class SpecialOperatorsComponent(GrammarComponent):
         Token(
             'BACKDIFF',
             r'd_',
-            is_reserved=True,
+            namespace='reserved',
             precedence=from_sequence,
             category='FUNCTION',
         ),
         Token(
             'BACKDIFF_INCLUSIVE',
             r'dd_',
-            is_reserved=True,
+            namespace='reserved',
             precedence=from_sequence,
             category='FUNCTION',
         ),
         Token(
             'FIRST_N',
             r'n_',
-            is_reserved=True,
+            namespace='reserved',
             precedence=from_sequence,
             category='FUNCTION',
         ),
         Token(
             'CUMUL_VAR',
             r'v_',
-            is_reserved=True,
+            namespace='reserved',
             precedence=from_sequence,
             category='FUNCTION',
         ),
