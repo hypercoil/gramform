@@ -7,8 +7,8 @@
 Core components of the `gramform` library for building simple DSLs.
 """
 import dataclasses
-import inspect
 import re
+from collections import namedtuple
 from functools import lru_cache
 from typing import (
     Any,
@@ -25,6 +25,7 @@ from enum import Enum, auto
 import ply.lex as lex
 import ply.yacc as yacc
 import wadler_lindig as wl
+from pydantic import BaseModel, ConfigDict, Field
 
 from .error import GrammarErrorHandler
 from .resampler import generate_valid_completion
@@ -257,6 +258,12 @@ class Primitive:
             is_terminal=self.is_terminal,
         )
 
+    def get_parameters(self) -> Any:
+        if len(self.parameters) == 1:
+            return self.parameters[0]
+        else:
+            return self.parameters
+
     def __repr__(self):
         return wl.pformat(self)
 
@@ -267,7 +274,9 @@ class Primitive:
         return hash((self.name, self.parameters))
 
     def __call__(self, context):
-        cache_hit = context.cache.get(self, NotInCache())
+        cache_hit = context.subcontexts.get(
+            'cache', {}
+        ).get(self, NotInCache())
         match cache_hit:
             case NotInCache():
                 result = context.interpreter[self.name](self, context)
@@ -322,7 +331,7 @@ class Literal:
         return hash((self.value, self.dtype))
 
     def __call__(self, context):
-        context = context.write(eval=self.value)
+        context = context.with_result(self.value)
         return context
 
 
@@ -336,70 +345,6 @@ class NotEvaluated:
 class NotInCache:
     """Sentinel value for primitives not in the cache."""
     pass
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class TransformationContext:
-    cache: Mapping[Primitive, Any] = dataclasses.field(default_factory=dict)
-
-    def prepare_cache(self, primitive: Primitive):
-        self.cache[primitive] = NotEvaluated()
-        return self
-
-    def get_cache(self, primitive: Primitive):
-        return self.cache.get(primitive, NotInCache())
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class ExecutionContext:
-    interpreter: Mapping[str, callable]
-    eval: Any = None
-    cache: Mapping[Primitive, Any] = dataclasses.field(default_factory=dict)
-    cache_vars: Mapping[str, callable] = dataclasses.field(
-        default_factory=dict
-    )
-
-    def read(self, *pparams):
-        return tuple(getattr(self, key) for key in pparams)
-
-    def write(self, *pparams, **params):
-        if pparams:
-            if len(pparams) != 2:
-                raise ValueError(
-                    "Positional parameters to context.write must be a key "
-                    f"and value: {pparams}"
-                )
-            key, value = pparams
-            params = {
-                **{key: value},
-                **params,
-            }
-        return dataclasses.replace(self, **params)
-
-    def pop(self, *pparams):
-        return (
-            self.read(*pparams),
-            dataclasses.replace(
-                self,
-                **{
-                    key: (
-                        inspect.signature(
-                            self.__init__
-                        ).parameters[key].default
-                        if key in self.__dict__
-                        else None
-                    )
-                    for key in pparams
-                },
-            ),
-        )
-
-    def __repr__(self):
-        return wl.pformat(self)
-
-    @classmethod
-    def eval_head(self) -> str | None:
-        return None
 
 
 # It's not really frozen when we keep changing the mutable fields, is it?
@@ -445,112 +390,6 @@ class InterpretersDispatch:
 
     def __repr__(self):
         return wl.pformat(self)
-
-
-@dataclasses.dataclass(frozen=True)
-class Processor:
-    grammar: "DynamicGrammar"
-    preprocessors: Tuple[Mapping[str, str] | callable, ...]
-    postprocessors: Tuple[callable, ...]
-    interpreters: InterpretersDispatch
-    execution_context: Type[ExecutionContext]
-    default_interpreter: str | None = None
-
-    def __post_init__(self):
-        if isinstance(self.grammar, Type[DynamicGrammar]):
-            object.__setattr__(self, 'grammar', self.grammar())
-        postprocessors = self.postprocessors
-        if ppr_execution_head not in postprocessors:
-            postprocessors = list(postprocessors) + [ppr_execution_head]
-        object.__setattr__(self, 'postprocessors', tuple(postprocessors))
-
-    def __repr__(self):
-        return wl.pformat(self)
-
-    def _preprocess(self, expr: str) -> str:
-        for preprocessor in self.preprocessors:
-            if isinstance(preprocessor, Mapping):
-                expr = re.sub(
-                    rf'\b({"|".join(
-                        re.escape(key) for key in preprocessor
-                    )})',
-                    lambda m: preprocessor[m.group(0)],
-                    expr,
-                )
-            else:
-                expr = preprocessor(expr)
-        return expr
-
-    def _parse(self, expr: str) -> Primitive:
-        parser = self.grammar.__parser__()
-        return parser.parse(expr)
-
-    def _postprocess(
-        self,
-        expr: Primitive,
-        context: TransformationContext,
-    ) -> Tuple[Primitive, TransformationContext]:
-        for postprocessor in self.postprocessors:
-            expr, context = postprocessor(expr, context)
-        return expr, context
-
-    def process(self, expr: str) -> Tuple[Primitive, TransformationContext]:
-        expr = self._preprocess(expr)
-        expr = self._parse(expr)
-        context = TransformationContext()
-        expr, context = self._postprocess(expr, context)
-        return expr, context
-
-    def __call__(self, expr: str, **params) -> Primitive:
-        ast, t_context = self.process(expr)
-        if 'context' in params:
-            context = params.pop('context')
-        else:
-            eval_head = self.execution_context.eval_head()
-            eval_head = (
-                {'eval': params.pop(eval_head, None)}
-                if eval_head is not None
-                else {}
-            )
-            interpreter = params.pop(
-                'interpreter',
-                self.default_interpreter,
-            )
-            orig_params = tuple(params.keys())
-            parameter_names = inspect.signature(
-                self.execution_context
-            ).parameters
-            context_params = {
-                e: params.pop(e)
-                for e in orig_params
-                if e in parameter_names
-            }
-            context = self.execution_context(
-                **context_params,
-                **eval_head,
-                interpreter=self.interpreters[interpreter],
-            )
-        context = context.write(**{
-            k: v
-            for k, v in t_context.__dict__.items()
-            if k not in context_params
-        })
-        result = ast(context, **params)
-        if result.eval is not None:
-            result = result.eval
-        return result
-
-
-def ppr_execution_head(
-    tree: Primitive,
-    context: TransformationContext,
-) -> Tuple[Primitive, TransformationContext]:
-    if tree.name != 'EXECUTION_HEAD':
-        tree = EXECUTION_HEAD.bind(tree)
-    return tree, context
-
-
-EXECUTION_HEAD = Primitive('EXECUTION_HEAD')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1209,3 +1048,301 @@ class DynamicGrammar:
 
     def __parser__(self):
         return self._parser
+
+
+class Subcontext(BaseModel):
+    """Base class for composable execution context features."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def get_state(self) -> Dict[str, Any]:
+        """Get the current state of this subcontext."""
+        return self.model_dump()
+
+    def update_state(self, state: Dict[str, Any]) -> 'Subcontext':
+        """Update the state of this subcontext."""
+        return self.model_copy(update=state)
+
+
+class CacheSubcontext(Subcontext):
+    """Cache functionality as a composable subcontext."""
+    cache: Dict[str, Any] = Field(default_factory=dict)
+
+    def get_cached(self, key: str) -> Optional[Any]:
+        """Get cached value."""
+        return self.cache.get(key)
+
+    def set_cached(self, key: str, value: Any) -> 'CacheSubcontext':
+        """Set cached value."""
+        new_cache = dict(self.cache)
+        new_cache[key] = value
+        return self.model_copy(update={'cache': new_cache})
+
+
+class CacheSubcontextMixin:
+    """Mixin for cache subcontext."""
+    def __add_subcontext__(self):
+        """Add cache subcontext to parent."""
+        subcontexts = self.subcontexts
+        if '__cache' not in subcontexts:
+            subcontexts['__cache'] = CacheSubcontext()
+        object.__setattr__(self, 'subcontexts', subcontexts)
+
+    def with_cache(self) -> 'ExecutionContext':
+        """Add cache functionality to the context."""
+        return self.with_subcontext('cache', CacheSubcontext())
+
+    def get_cached(self, key: str) -> Optional[Any]:
+        """Get cached value if cache subcontext exists."""
+        cache_subcontext = self.get_subcontext('cache')
+        if cache_subcontext:
+            return cache_subcontext.get_cached(key)
+        return None
+
+    def set_cached(self, key: str, value: Any) -> 'ExecutionContext':
+        """Set cached value if cache subcontext exists."""
+        cache_subcontext = self.get_subcontext('cache')
+        if cache_subcontext:
+            new_cache = cache_subcontext.set_cached(key, value)
+            return self.with_subcontext('cache', new_cache)
+        return self
+
+
+class TypedState(BaseModel):
+    """Type-safe context state with Pydantic validation."""
+    eval: Optional[Any] = None
+    _default_field: str = 'eval'
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        frozen=True,
+    )
+
+    def pop(self, *pparams) -> Tuple['TypedState', 'TypedState']:
+        """Pop values from the state."""
+        if not pparams:
+            pparams = (self._default_field,)
+        print(self.__class__)
+        result = self.__class__(**{
+            key: getattr(self, key)
+            for key in pparams
+        })
+        state = self.__class__.model_validate(
+            self.model_dump(exclude=pparams)
+        )
+        print(result, state)
+        return result, state
+
+    def update(self, *pparams, **update) -> 'TypedState':
+        """Update the state."""
+        if pparams:
+            update = {
+                **update,
+                self._default_field: pparams[0],
+            }
+        return self.model_copy(update=update)
+
+
+class UninitialisedState(TypedState):
+    """Uninitialised state."""
+    def pop(self, *pparams):
+        raise ValueError("State is not initialised")
+
+    def update(self, *pparams, **update):
+        raise ValueError("State is not initialised")
+
+
+class ExecutionContext(BaseModel):
+    __state__: Type[TypedState] = TypedState
+    interpreter: Dict[str, Callable] = Field(
+        description="Mapping of operation names to callable implementations",
+        default_factory=dict,
+    )
+    state: TypedState = Field(default_factory=UninitialisedState)
+    subcontexts: Dict[str, Subcontext] = Field(default_factory=dict)
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        frozen=True,
+    )
+
+    def model_post_init(self, __context__):
+        """Post-initialization hook."""
+        object.__setattr__(self, 'state', self.__state__())
+        for parent in self.__class__.__mro__:
+            if hasattr(parent, '__add_subcontext__'):
+                parent.__add_subcontext__(self)
+
+    def pop(self, *pparams):
+        """Pop values from the context state."""
+        result, state = self.state.pop(*pparams)
+        return result, self.with_state(state)
+
+    def update_state(self, **update) -> 'ExecutionContext':
+        """Update the state of the context."""
+        return self.model_copy(update={'state': self.state.update(**update)})
+
+    def with_state(
+        self,
+        state: Any = None,
+        **update,
+    ) -> 'ExecutionContext':
+        """Create context with updated result."""
+        if isinstance(state, TypedState):
+            return self.model_copy(update={'state': state})
+        if (state is not None) and (not isinstance(state, TypedState)):
+            update = {
+                **update,
+                self.state._default_field: state,
+            }
+        new_state = self.__state__(**update)
+        return self.model_copy(update={'state': new_state})
+
+    def get_state(self) -> Optional[Any]:
+        """Get the current state."""
+        return self.state
+
+    def with_result(
+        self,
+        result: Any = None,
+    ) -> 'ExecutionContext':
+        """Create context with updated result."""
+        return self.model_copy(update={'state': self.state.update(result)})
+
+    def get_result(self) -> Optional[Any]:
+        """Get the current result."""
+        return getattr(self.get_state(), self.state._default_field)
+
+    def with_subcontext(
+        self,
+        name: str,
+        subcontext: Subcontext,
+    ) -> 'ExecutionContext':
+        """Add or update a subcontext with validation."""
+        new_subcontexts = dict(self.subcontexts)
+        new_subcontexts[f"__subcontext_{name}"] = subcontext
+        return self.model_copy(update={'subcontexts': new_subcontexts})
+
+    def get_subcontext(self, name: str) -> Optional[Subcontext]:
+        """Get a subcontext by name."""
+        return self.subcontexts.get(f"__subcontext_{name}", None)
+
+
+@dataclasses.dataclass(frozen=True)
+class TransformProcessor:
+    """
+    Enhanced processor with built-in initialization and finalization support.
+    """
+    grammar: DynamicGrammar
+    preprocessors: Tuple[Mapping[str, str] | callable, ...]
+    postprocessors: Tuple[callable, ...]
+    interpreters: InterpretersDispatch
+    context_class: Type[ExecutionContext]
+    initialisation_hooks: Dict[str, callable] = dataclasses.field(
+        default_factory=dict
+    )
+    finalisation_hooks: Dict[str, callable] = dataclasses.field(
+        default_factory=dict
+    )
+    default_interpreter: str | None = None
+
+    def __post_init__(self):
+        if (
+            hasattr(self.grammar, '__call__') and
+            not hasattr(self.grammar, 'components')
+        ):
+            object.__setattr__(self, 'grammar', self.grammar())
+        object.__setattr__(self, 'postprocessors', tuple(self.postprocessors))
+
+    def __repr__(self):
+        return wl.pformat(self)
+
+    def _preprocess(self, expr: str) -> str:
+        for preprocessor in self.preprocessors:
+            if isinstance(preprocessor, Mapping):
+                expr = re.sub(
+                    rf'\b({"|".join(
+                        re.escape(key) for key in preprocessor
+                    )})',
+                    lambda m: preprocessor[m.group(0)],
+                    expr,
+                )
+            else:
+                expr = preprocessor(expr)
+        return expr
+
+    def _parse(self, expr: str) -> Primitive:
+        parser = self.grammar.__parser__()
+        return parser.parse(expr)
+
+    def _postprocess(
+        self,
+        expr: Primitive,
+        context: ExecutionContext,
+    ) -> Tuple[Primitive, ExecutionContext]:
+        for postprocessor in self.postprocessors:
+            expr, context = postprocessor(expr, context)
+        return expr, context
+
+    def process(
+        self,
+        expression: str,
+        interpreter: str | None = None,
+    ) -> Tuple[Primitive, ExecutionContext]:
+        expression = self._preprocess(expression)
+        expression = self._parse(expression)
+        context = self.context_class(
+            interpreter=self.interpreters[
+                interpreter or self.default_interpreter
+            ],
+        )
+        expression, context = self._postprocess(expression, context)
+        return expression, context
+
+    def register_initialisation(self, interpreter_name: str, hook: callable):
+        """Register initialisation hook for an interpreter."""
+        object.__setattr__(self, 'initialisation_hooks', {
+            **self.initialisation_hooks,
+            interpreter_name: hook
+        })
+
+    def register_finalisation(self, interpreter_name: str, hook: callable):
+        """Register finalisation hook for an interpreter."""
+        object.__setattr__(self, 'finalisation_hooks', {
+            **self.finalisation_hooks,
+            interpreter_name: hook
+        })
+
+    def transform(
+        self,
+        expression: str,
+        interpreter: str | None = None,
+        **init_params,
+    ) -> Any:
+        """Transform expression with initialization and finalization."""
+        # Parse AST
+        interpreter = interpreter or self.default_interpreter
+        ast, context = self.process(
+            expression=expression,
+            interpreter=interpreter,
+        )
+        if 'context' in init_params:
+            context = init_params.pop('context')
+
+        # Run initialization hook if present
+        if interpreter in self.initialisation_hooks:
+            context = self.initialisation_hooks[interpreter](
+                context,
+                **init_params,
+            )
+
+        # Execute AST
+        result_context = ast(context)
+
+        # Run finalization hook if present
+        if interpreter in self.finalisation_hooks:
+            result_context = self.finalisation_hooks[interpreter](
+                result_context
+            )
+
+        return result_context.get_result()
+
+    def __call__(self, expr: str, **params) -> Primitive:
+        return self.transform(expr, **params)

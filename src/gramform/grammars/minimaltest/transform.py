@@ -2,26 +2,33 @@
 # emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
 # vi: set ft=python sts=4 ts=4 sw=4 et:
 """
-DataFrames
-~~~~~~~~~~
-Transformations for DataFrame operations.
+Minimal grammar for testing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Transformations for the minimal test grammar.
 """
 import dataclasses
 import operator
-import os
 from functools import reduce
 from itertools import chain
-from typing import Any, Mapping, Iterable, Literal, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type
 
 import narwhals as nw
 import numpy as np
-import wadler_lindig as wl
-from narwhals.typing import IntoFrame, IntoFrameT
+from narwhals.typing import Frame, IntoFrame, IntoFrameT
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from gramform.core import (
+    CacheSubcontextMixin,
     ExecutionContext,
+    TypedState,
     InterpretersDispatch,
-    Processor,
+    TransformProcessor,
+    binary_operation,
+    unary_operation,
+    terminal_to_result,
+    cached_operation,
+    sequence_operation,
+    CacheSubcontext,
 )
 from gramform.grammars.minimaltest.grammar import (
     MinimalGrammar,
@@ -35,56 +42,94 @@ from gramform.postprocessors import (
 INTERPRETERS = InterpretersDispatch()
 
 
+class DataFrameState(TypedState):
+    data: Any = None
+    select: List[str] = dataclasses.field(default_factory=list)
+
+    @field_validator('data')
+    def check_dataframe(cls, v):
+        if v is None:
+            return v
+        try:
+            nw.from_native(v)  # Try to wrap with narwhals
+            return v
+        except Exception:
+            raise ValueError("Expected a narwhals-compatible DataFrame")
+
+
+class DataFrameContext(
+    ExecutionContext,
+    CacheSubcontextMixin,
+):
+    __state__: Type[DataFrameState] = DataFrameState
+
+    def with_data(self, data: IntoFrameT) -> 'DataFrameContext':
+        return self.update_state(data=data)
+
+    def with_selection(self, select: list[str]) -> 'DataFrameContext':
+        return self.update_state(select=select)
+
+    def with_eval(self, eval: Any) -> 'DataFrameContext':
+        return self.update_state(eval=eval)
+
+    def get_data(self) -> IntoFrameT:
+        return self.state.data
+
+    def get_selection(self) -> list[str]:
+        return self.state.select
+
+    def get_eval(self) -> Any:
+        return self.state.eval
+
+
 def VARIABLE_impl(node, context):
-    name, = node.parameters
-    data, selection = context.read('data', 'select')
-    if name not in data:
+    name, state = node.get_parameters(), context.state
+    if name not in state.data:
         raise ValueError(f"Variable {name} not found in data")
-    selection.append(name)
-    context = context.write('select', selection)
-    return context
+    return context.with_selection(state.select + [name])
 
 
 def LITERAL_impl(node, context):
-    value, dtype = node.parameters
-    context = context.write('eval', value)
-    return context
+    value, dtype = node.get_parameters()
+    return context.with_result(value)
 
 
 def RANGE_impl(node, context):
-    start, end = node.parameters
-    (start,), context = start(context).pop('eval')
-    (end,), context = end(context).pop('eval')
-    context = context.write('eval', range(start, end + 1))
-    return context
+    expr_start, expr_end = node.get_parameters()
+    start, context = expr_start(context).pop()
+    end, context = expr_end(context).pop()
+    return context.with_result(range(start.eval, end.eval + 1))
 
 
 def ENUM_impl(node, context):
     eval = []
-    for child in node.parameters:
-        (new_eval,), context = child(context).pop('eval')
+    for child in node.get_parameters():
+        result, context = child(context).pop()
+        new_eval = result.eval
         if not isinstance(new_eval, Iterable):
             new_eval = (new_eval,)
         eval.extend(new_eval)
-    context = context.write(eval=chain(eval))
+    context = context.with_result(chain(eval))
     return context
 
 
 def CONCATENATE_impl(node, context):
-    (selection,), context = context.pop('select')
+    state, context = context.pop('select')
+    selection = state.select
     for child in node.parameters:
-        (new_selection,), context = child(context).pop('select')
-        selection.extend(new_selection)
-    context = context.write(select=selection)
-    return context
+        new_state, context = child(context).pop('select')
+        selection.extend(new_state.select)
+    return context.with_selection(selection)
 
 
 def POWER_impl(node, context):
-    argument, power = node.parameters
+    argument, power = node.get_parameters()
     context = argument(context)
-    (data, selection), context = context.pop('data', 'select')
+    state, context = context.pop('data', 'select')
+    data, selection = state.data, state.select
     context = power(context)
-    (pow_order, pow_cols), context = context.pop('eval', 'select')
+    state, context = context.pop('eval', 'select')
+    pow_order, pow_cols = state.eval, state.select
     if pow_cols:
         raise ValueError("Power operation does not support column selection")
     new_selection = []
@@ -101,18 +146,20 @@ def POWER_impl(node, context):
             for col, arg in zip(new_columns, values)
         ])
         new_selection.extend(new_columns)
-    context = context.write(data=data, select=new_selection)
+    context = context.update_state(data=data, select=new_selection)
     return context
 
 
 def BACKDIFF_impl(node, context):
-    argument, order = node.parameters
-    context = argument(context)
-    (data, selection), context = context.pop('data', 'select')
-    context = order(context)
-    (order, order_cols), context = context.pop('eval', 'select')
+    argument, order = node.get_parameters()
+    state, context = argument(context).pop('data', 'select')
+    data, selection = state.data, state.select
+    state, context = order(context).pop('eval', 'select')
+    order, order_cols = state.eval, state.select
     if order_cols:
-        raise ValueError("Backdiff operation does not support column selection")
+        raise ValueError(
+            "Backdiff operation does not support column selection"
+        )
     new_selection, result = [], {}
     values = [nw.col(e) for e in selection]
     if not isinstance(order, Iterable):
@@ -133,17 +180,17 @@ def BACKDIFF_impl(node, context):
             for e, col in zip(result[ord], new_columns)
         ])
         new_selection.extend(new_columns)
-    context = context.write(data=data, select=new_selection)
+    context = context.update_state(data=data, select=new_selection)
     return context
 
 
 def BINOP_impl(node, context, op: callable, col_infix: str):
-    left, right = node.parameters
-    context = left(context)
-    (left_selection, left_eval), context = context.pop('select', 'eval')
-    context = right(context)
-    (right_selection, right_eval), context = context.pop('select', 'eval')
-    (data,) = context.read('data')
+    left_expr, right_expr = node.get_parameters()
+    state, context = left_expr(context).pop('select', 'eval')
+    left_selection, left_eval = state.select, state.eval
+    state, context = right_expr(context).pop('select', 'eval')
+    right_selection, right_eval = state.select, state.eval
+    data = context.get_data()
     if left_selection is not None:
         left_args = [nw.col(e) for e in left_selection]
         left_cols = left_selection
@@ -171,7 +218,7 @@ def BINOP_impl(node, context, op: callable, col_infix: str):
     ])
     # if data.isnull().any().any():
     #     raise ValueError("Result of binary operation contains NaN")
-    return context.write(data=data, select=new_columns)
+    return context.update_state(data=data, select=new_columns)
 
 
 def CONDITION_EQUAL_impl(node, context):
@@ -207,45 +254,45 @@ def UNION_impl(node, context):
 
 
 def NEGATION_impl(node, context):
-    argument, = node.parameters
-    context = argument(context)
-    (selection,), context = context.pop('select')
-    (data,) = context.read('data')
+    argument = node.get_parameters()
+    state, context = argument(context).pop('select')
+    selection = state.select
+    data = context.get_data()
     result = [~(nw.col(e)) for e in selection]
     col_names = [f'not_{c}' for c in selection]
     data = data.with_columns([
         val.alias(col)
         for val, col in zip(result, col_names)
     ])
-    return context.write(data=data, select=col_names)
+    return context.update_state(data=data, select=col_names)
 
 
 def UNION_REDUCE_impl(node, context):
-    argument, = node.parameters
-    context = argument(context)
-    (selection,), context = context.pop('select')
-    (data,) = context.read('data')
+    argument = node.get_parameters()
+    state, context = argument(context).pop('select')
+    selection = state.select
+    data = context.get_data()
     result = [reduce(operator.or_, (nw.col(e) for e in selection))]
     col_names = [f"any_{'_or_'.join(selection)}"]
     data = data.with_columns([
         val.alias(col)
         for val, col in zip(result, col_names)
     ])
-    return context.write(data=data, select=col_names)
+    return context.update_state(data=data, select=col_names)
 
 
 def INTERSECTION_REDUCE_impl(node, context):
-    argument, = node.parameters
-    context = argument(context)
-    (selection,), context = context.pop('select')
-    (data,) = context.read('data')
+    argument = node.get_parameters()
+    state, context = argument(context).pop('select')
+    selection = state.select
+    data = context.get_data()
     result = [reduce(operator.and_, (nw.col(e) for e in selection))]
     col_names = [f"all_{'_and_'.join(selection)}"]
     data = data.with_columns([
         val.alias(col)
         for val, col in zip(result, col_names)
     ])
-    return context.write(data=data, select=col_names)
+    return context.update_state(data=data, select=col_names)
 
 
 def INDICATOR_impl(node, context):
@@ -253,43 +300,33 @@ def INDICATOR_impl(node, context):
     This currently is an identity operation, but it might in the future be
     used to materialize boolean expressions into the DataFrame.
     """
-    expr, = node.parameters
+    expr = node.get_parameters()
     return expr(context)
 
 
-def EXEC_impl(node, context):
-    tree, = node.parameters
-    (exec_mode,), context = context.pop('eval')
-    (input,), context = context.pop('data')
+def init_hook(
+    context: DataFrameContext,
+    data: IntoFrameT,
+) -> DataFrameContext:
     try:
-        data = nw.from_native(input)
+        data = nw.from_native(data)
     except TypeError:
-        raise ValueError(f"Invalid input type: {type(input)}")
+        raise ValueError(f"Invalid input type: {type(data)}")
     if 'index' not in data:
         data = data.with_row_index()
-    context = context.write(data=data)
-    context = tree(context)
-    if context.eval is not None:
-        result, context = context.pop('eval')
-    else:
-        (data, selection), context = context.pop('data', 'select')
+    context = context.update_state(data=data)
+    return context
+
+
+def finalize_hook(
+    context: DataFrameContext,
+) -> DataFrameContext:
+    result = context.get_result()
+    if result is None:
+        state, context = context.pop('data', 'select')
+        data, selection = state.data, state.select
         result = data.select(selection)
-    return context.write(eval=nw.to_native(result))
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True, repr=False)
-class DataFrameContext(ExecutionContext):
-    data: IntoFrameT
-    select: list[str] = dataclasses.field(default_factory=list)
-    cache_vars: Mapping[str, callable] = dataclasses.field(
-        default_factory=lambda: {
-            'select': lambda in_context, in_cache: in_cache
-        }
-    )
-
-    @classmethod
-    def eval_head(self) -> str | None:
-        return 'exec_mode'
+    return context.with_result(nw.to_native(result))
 
 
 INTERPRETERS.register_interpreter('nw')
@@ -300,7 +337,6 @@ INTERPRETERS.register_operation('__all__', 'VARIABLE', VARIABLE_impl)
 INTERPRETERS.register_operation('__all__', 'LITERAL', LITERAL_impl)
 INTERPRETERS.register_operation('__all__', 'RANGE', RANGE_impl)
 INTERPRETERS.register_operation('__all__', 'ENUM', ENUM_impl)
-INTERPRETERS.register_operation('__all__', 'EXECUTION_HEAD', EXEC_impl)
 INTERPRETERS.register_operation('__all__', 'INDICATOR', INDICATOR_impl)
 INTERPRETERS.register_operation('__all__', 'CONDITION_EQUAL', CONDITION_EQUAL_impl)
 INTERPRETERS.register_operation('__all__', 'CONDITION_NOT_EQUAL', CONDITION_NOT_EQUAL_impl)
@@ -315,9 +351,8 @@ INTERPRETERS.register_operation('__all__', 'UNION_REDUCE', UNION_REDUCE_impl)
 INTERPRETERS.register_operation('__all__', 'INTERSECTION_REDUCE', INTERSECTION_REDUCE_impl)
 
 
-def main():
-    import pandas as pd
-    processor = Processor(
+def get_processor():
+    processor = TransformProcessor(
         grammar=MinimalGrammar(),
         preprocessors=(confound_formula_preprocessor(),),
         postprocessors=(
@@ -325,9 +360,18 @@ def main():
             ppr_common_subexpression,
         ),
         interpreters=INTERPRETERS,
-        execution_context=DataFrameContext,
+        context_class=DataFrameContext,
         default_interpreter='nw',
     )
+    processor.register_initialisation('nw', init_hook)
+    processor.register_finalisation('nw', finalize_hook)
+    return processor
+
+
+
+def main():
+    import pandas as pd
+    processor = get_processor()
     result = processor.process('d_[1]((x+y)^^2 + (x+y)^^2)')
     result = processor(
         'dd_[3]((x+y)^2,4-5 + (x+y)^2,4-5)',

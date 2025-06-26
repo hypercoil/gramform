@@ -9,14 +9,14 @@ Postprocessors are used to transform the tree after it has been parsed.
 from typing import Tuple
 from .core import (
     Primitive,
-    TransformationContext,
+    ExecutionContext,
 )
 
 
 def ppr_associative_flatten(
     tree: Primitive,
-    context: TransformationContext,
-) -> Tuple[Primitive, TransformationContext]:
+    context: ExecutionContext,
+) -> Tuple[Primitive, ExecutionContext]:
     def _flatten(children, to_flatten):
         for child, flatten in zip(children, to_flatten):
             if flatten:
@@ -41,12 +41,9 @@ def ppr_associative_flatten(
 
 def ppr_common_subexpression(
     tree: Primitive,
-    context: TransformationContext,
-) -> Tuple[Primitive, TransformationContext]:
+    context: ExecutionContext,
+) -> Tuple[Primitive, ExecutionContext]:
     subexpressions = {}
-    # TODO: This is a cache, but it's not used.
-    # We don't use this cache, but it's here in case it simplifies a
-    # future implementation. If not, we should remove it.
     cache = set()
 
     def _collect(tree, subexpressions):
@@ -64,6 +61,12 @@ def ppr_common_subexpression(
         return tree.bind(*children), subexpressions
 
     tree, _ = _collect(tree, subexpressions)
+    # Ensure cache subcontext is available
+    if not context.get_subcontext('cache'):
+        context = context.with_cache()
+
+    # Prepare cache entries for primitives that will be cached
     for prim in cache:
-        context = context.prepare_cache(prim)
+        context = context.set_cached(str(prim), None)  # Mark as prepared
+
     return tree, context

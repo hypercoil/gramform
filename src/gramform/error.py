@@ -325,6 +325,8 @@ class GrammarErrorHandler:
         precomputed: Dict[str, str] = None,
     ) -> 'GrammarErrorHandler':
         """Generate and cache example values for tokens."""
+        if precomputed is None:
+            precomputed = {}
         example_values = {
             token.name: precomputed.get(token.name, token.generate_example())
             for token in tokens
