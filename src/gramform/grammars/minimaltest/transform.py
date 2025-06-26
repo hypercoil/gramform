@@ -10,12 +10,12 @@ import dataclasses
 import operator
 from functools import reduce
 from itertools import chain
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Type
+from typing import Any, Iterable, List, Type
 
 import narwhals as nw
 import numpy as np
-from narwhals.typing import Frame, IntoFrame, IntoFrameT
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from narwhals.typing import IntoFrameT
+from pydantic import field_validator
 
 from gramform.core import (
     CacheSubcontextMixin,
@@ -23,12 +23,6 @@ from gramform.core import (
     TypedState,
     InterpretersDispatch,
     TransformProcessor,
-    binary_operation,
-    unary_operation,
-    terminal_to_result,
-    cached_operation,
-    sequence_operation,
-    CacheSubcontext,
 )
 from gramform.grammars.minimaltest.grammar import (
     MinimalGrammar,
@@ -366,30 +360,3 @@ def get_processor():
     processor.register_initialisation('nw', init_hook)
     processor.register_finalisation('nw', finalize_hook)
     return processor
-
-
-
-def main():
-    import pandas as pd
-    processor = get_processor()
-    result = processor.process('d_[1]((x+y)^^2 + (x+y)^^2)')
-    result = processor(
-        'dd_[3]((x+y)^2,4-5 + (x+y)^2,4-5)',
-        data=pd.DataFrame(
-            {'x': [1, 2, 3], 'y': [4, 5, 6]},
-            index=[1, 2, 3],
-        ),
-    )
-    breakpoint()
-    result = processor(
-        'NOT_((x=y && x=z) || x>=w) + AND_(I_[x=y] + I_[x=z] + OR_(I_[x=w] + I_[x=v]))',
-        data=pd.DataFrame(
-            {'x': [1, 2, 3], 'y': [3, 2, 1], 'z': [2, 2, 2], 'w': [0, 2, 3], 'v': [1, 0, 0]},
-            index=[1, 2, 3],
-        ),
-    )
-    breakpoint()
-
-
-if __name__ == '__main__':
-    main()

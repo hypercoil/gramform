@@ -2,9 +2,12 @@
 Tests for the minimal grammar implementation.
 """
 import pytest
-from gramform.core import TransformationContext, ppr_execution_head
 from gramform.grammars.minimaltest.grammar import (
     MinimalGrammar,
+)
+from gramform.grammars.minimaltest.transform import (
+    DataFrameContext,
+    get_processor,
 )
 from gramform.postprocessors import (
     ppr_associative_flatten,
@@ -28,14 +31,20 @@ def test_basic_arithmetic():
 
     # Test parsing and postprocessing
     result = parser.parse(expr)
-    context = TransformationContext()
+    context = DataFrameContext()
     result, context = ppr_associative_flatten(result, context)
     result, context = ppr_common_subexpression(result, context)
-    result, context = ppr_execution_head(result, context)
 
     # Verify the structure of the parsed expression
-    assert result.name == 'EXECUTION_HEAD'
-    assert len(result.parameters) == 1
+    assert result.name == 'CONCATENATE'
+    assert len(result.parameters) == 5
+    assert tuple(e.name for e in result.parameters) == (
+        'POWER',
+        'VARIABLE',
+        'VARIABLE',
+        'VARIABLE',
+        'POWER',
+    )
 
 
 def test_indicators_and_backdiff():
@@ -53,14 +62,16 @@ def test_indicators_and_backdiff():
 
     # Test parsing and postprocessing
     result = parser.parse(expr)
-    context = TransformationContext()
+    context = DataFrameContext()
     result, context = ppr_associative_flatten(result, context)
     result, context = ppr_common_subexpression(result, context)
-    result, context = ppr_execution_head(result, context)
 
     # Verify the structure
-    assert result.name == 'EXECUTION_HEAD'
-    assert len(result.parameters) == 1
+    assert result.name == 'CONCATENATE'
+    assert len(result.parameters) == 3
+    assert tuple(e.name for e in result.parameters) == (
+        'POWER', 'INDICATOR', 'BACKDIFF'
+    )
 
 
 def test_complex_boolean_operations():
@@ -79,14 +90,16 @@ def test_complex_boolean_operations():
 
     # Test parsing and postprocessing
     result = parser.parse(expr)
-    context = TransformationContext()
+    context = DataFrameContext()
     result, context = ppr_associative_flatten(result, context)
     result, context = ppr_common_subexpression(result, context)
-    result, context = ppr_execution_head(result, context)
 
     # Verify the structure
-    assert result.name == 'EXECUTION_HEAD'
-    assert len(result.parameters) == 1
+    assert result.name == 'CONCATENATE'
+    assert len(result.parameters) == 3
+    assert tuple(e.name for e in result.parameters) == (
+        'SCATTER', 'INTERSECTION_REDUCE', 'CUMUL_VAR'
+    )
 
 
 def test_common_subexpression_elimination():
@@ -97,14 +110,16 @@ def test_common_subexpression_elimination():
 
     # Test parsing and postprocessing
     result = parser.parse(expr)
-    context = TransformationContext()
+    context = DataFrameContext()
     result, context = ppr_associative_flatten(result, context)
     result, context = ppr_common_subexpression(result, context)
-    result, context = ppr_execution_head(result, context)
 
     # Verify that common subexpressions were eliminated
-    assert result.name == 'EXECUTION_HEAD'
-    assert len(result.parameters) == 1
+    assert result.name == 'CONCATENATE'
+    assert len(result.parameters) == 3
+    assert tuple(e.name for e in result.parameters) == (
+        'POWER', 'POWER', 'POWER'
+    )
 
 
 def test_backdiff_with_common_subexpressions():
@@ -115,14 +130,13 @@ def test_backdiff_with_common_subexpressions():
 
     # Test parsing and postprocessing
     result = parser.parse(expr)
-    context = TransformationContext()
+    context = DataFrameContext()
     result, context = ppr_associative_flatten(result, context)
     result, context = ppr_common_subexpression(result, context)
-    result, context = ppr_execution_head(result, context)
 
     # Verify the structure and optimization
-    assert result.name == 'EXECUTION_HEAD'
-    assert len(result.parameters) == 1
+    assert result.name == 'CONCATENATE'
+    assert len(result.parameters) == 2
 
 
 def test_invalid_expressions():
@@ -159,13 +173,19 @@ def test_reserved_words():
 
     # Test parsing
     result = parser.parse(expr)
-    context = TransformationContext()
+    context = DataFrameContext()
     result, context = ppr_associative_flatten(result, context)
     result, context = ppr_common_subexpression(result, context)
-    result, context = ppr_execution_head(result, context)
 
-    assert result.name == 'EXECUTION_HEAD'
-    assert len(result.parameters) == 1
+    assert result.name == 'CONCATENATE'
+    assert len(result.parameters) == 5
+    assert tuple(e.name for e in result.parameters) == (
+        'INDICATOR',
+        'BACKDIFF',
+        'INTERSECTION_REDUCE',
+        'UNION_REDUCE',
+        'INDICATOR',
+    )
 
 
 def test_lexer_error_reporting():
@@ -446,3 +466,23 @@ def test_token_error_reporting():
     assert "Lexical error at line 1, column 6:" in error_msg
     assert "x + 1@var" in error_msg
     assert "     ^" in error_msg
+
+
+def test_basic_processor():
+    import pandas as pd
+    processor = get_processor()
+    result = processor.process('d_[1]((x+y)^^2 + (x+y)^^2)')
+    result = processor(
+        'dd_[3]((x+y)^2,4-5 + (x+y)^2,4-5)',
+        data=pd.DataFrame(
+            {'x': [1, 2, 3], 'y': [4, 5, 6]},
+            index=[1, 2, 3],
+        ),
+    )
+    result = processor(
+        'NOT_((x=y && x=z) || x>=w) + AND_(I_[x=y] + I_[x=z] + OR_(I_[x=w] + I_[x=v]))',
+        data=pd.DataFrame(
+            {'x': [1, 2, 3], 'y': [3, 2, 1], 'z': [2, 2, 2], 'w': [0, 2, 3], 'v': [1, 0, 0]},
+            index=[1, 2, 3],
+        ),
+    )
