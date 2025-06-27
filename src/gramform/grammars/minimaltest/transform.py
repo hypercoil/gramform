@@ -20,9 +20,11 @@ from pydantic import field_validator
 from gramform.core import (
     CacheSubcontextMixin,
     ExecutionContext,
-    TypedState,
     InterpretersDispatch,
+    Primitive,
     TransformProcessor,
+    Tuple,
+    TypedState,
 )
 from gramform.grammars.minimaltest.grammar import (
     MinimalGrammar,
@@ -84,8 +86,7 @@ def VARIABLE_impl(node, context):
 
 
 def LITERAL_impl(node, context):
-    value, dtype = node.get_parameters()
-    return context.with_result(value)
+    return context.with_result(node.value)
 
 
 def RANGE_impl(node, context):
@@ -299,9 +300,10 @@ def INDICATOR_impl(node, context):
 
 
 def init_hook(
+    ast: Primitive,
     context: DataFrameContext,
     data: IntoFrameT,
-) -> DataFrameContext:
+) -> Tuple[Primitive, DataFrameContext]:
     try:
         data = nw.from_native(data)
     except TypeError:
@@ -309,10 +311,10 @@ def init_hook(
     if 'index' not in data:
         data = data.with_row_index()
     context = context.update_state(data=data)
-    return context
+    return ast, context
 
 
-def finalize_hook(
+def finalise_hook(
     context: DataFrameContext,
 ) -> DataFrameContext:
     result = context.get_result()
@@ -358,5 +360,5 @@ def get_processor():
         default_interpreter='nw',
     )
     processor.register_initialisation('nw', init_hook)
-    processor.register_finalisation('nw', finalize_hook)
+    processor.register_finalisation('nw', finalise_hook)
     return processor

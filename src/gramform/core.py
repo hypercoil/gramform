@@ -85,7 +85,7 @@ def pop_state_and_return(t, grammar):
     return t
 
 
-def literal(dtype: Type):
+def literal(dtype: Type, name: str = 'LITERAL', cast: callable = None):
     """
     A production rule pattern used for literals.
 
@@ -93,7 +93,8 @@ def literal(dtype: Type):
     construct : LITERAL
     """
     def _inner(value):
-        return Literal.create(dtype(value), dtype)
+        _cast = cast or dtype
+        return Literal.create(_cast(value), dtype, name=name)
     return _inner
 
 
@@ -235,6 +236,8 @@ def config_primitives():
         )
         registry[name] = prim
         return prim
+    _inner.__doc__ = Primitive.__doc__
+    _inner.__name__ = Primitive.__name__
     return _inner, registry
 
 
@@ -305,6 +308,7 @@ class Primitive:
 
 @dataclasses.dataclass(frozen=True)
 class Literal:
+    name: str = 'LITERAL'
     value: Any = None
     dtype: Type | None = None
 
@@ -313,9 +317,9 @@ class Literal:
             object.__setattr__(self, 'dtype', type(self.value))
 
     @classmethod
-    def create(cls, *pparams):
+    def create(cls, *pparams, name: str = 'LITERAL'):
         value, dtype = pparams
-        return cls(value=value, dtype=dtype)
+        return cls(value=value, dtype=dtype, name=name)
 
     @property
     def is_terminal(self) -> bool:
@@ -331,7 +335,10 @@ class Literal:
         return hash((self.value, self.dtype))
 
     def __call__(self, context):
-        context = context.with_result(self.value)
+        try:
+            context = context.interpreter[self.name](self, context)
+        except KeyError:
+            context = context.with_result(self.value)
         return context
 
 
@@ -1328,7 +1335,8 @@ class TransformProcessor:
 
         # Run initialization hook if present
         if interpreter in self.initialisation_hooks:
-            context = self.initialisation_hooks[interpreter](
+            ast, context = self.initialisation_hooks[interpreter](
+                ast,
                 context,
                 **init_params,
             )
