@@ -3,12 +3,16 @@
 # vi: set ft=python sts=4 ts=4 sw=4 et:
 """
 Wilkinson Transforms
-~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
 Transformations for converting Wilkinson notation AST to formulaic.Formula.
+
+This is a proof of concept---formulaic's parser already supports Wilkinson
+notation---but we use it as a composable component in an extended Wilkinson
+grammar.
 """
 import dataclasses
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Tuple, Type
+from typing import Any, Dict, Iterable, Tuple, Type
 
 import formulaic
 from formulaic.parser.types import Factor, Term
@@ -153,33 +157,32 @@ def REMOVAL_impl(
     ).with_result(result)
 
 
+def build_factor_seqs(
+    candidates: Iterable[Term] | Factor | Term
+) -> Dict[Tuple[Factor], None]:
+    seqs = {}
+    if isinstance(candidates, Iterable):
+        seqs.update(
+            dict.fromkeys(
+                tuple(e.factors)
+                for e in candidates
+            )
+        )
+    elif isinstance(candidates, Term):
+        candidates = tuple(candidates.factors)
+        seqs[candidates] = None
+    elif isinstance(candidates, Factor):
+        seqs[(candidates,)] = None
+    else:
+        raise ValueError(f"Unexpected child result: {candidates}")
+    return seqs
+
+
 def INTERACTION_impl(
     node: Primitive,
     context: WilkinsonContext,
 ) -> WilkinsonContext:
     """Handle interaction (Cartesian product) of factors."""
-
-    def build_factor_seqs(
-        candidates: Iterable[Term] | Factor | Term
-    ) -> Dict[List[Factor], None]:
-        seqs = {}
-        if isinstance(candidates, Iterable):
-            seqs.update(
-                dict.fromkeys(
-                    tuple(e.factors)
-                    # if isinstance(e, Term)
-                    # else [e]
-                    for e in candidates
-                )
-            )
-        elif isinstance(candidates, Term):
-            candidates = tuple(candidates.factors)
-            seqs[candidates] = None
-        elif isinstance(candidates, Factor):
-            seqs[(candidates,)] = None
-        else:
-            raise ValueError(f"Unexpected child result: {candidates}")
-        return seqs
 
     children = node.get_parameters()
     first, remaining = children[0], children[1:]
@@ -206,15 +209,36 @@ def NESTED_impl(
     context: WilkinsonContext,
 ) -> WilkinsonContext:
     """Handle nested effects (hierarchical structure)."""
-    return context
+    left, right = node.get_parameters()
+
+    left_result = left(context).get_result()
+    right_result = right(context).get_result()
+
+    left_factors = build_factor_seqs(left_result)
+    right_factors = build_factor_seqs(right_result)
+
+    left_reduced = sum(left_factors.keys(), ())
+
+    factor_seqs = {
+        **{Term(factors=a): None for a in left_factors},
+        **{Term(factors=left_reduced + b): None for b in right_factors},
+    }
+    return context.set_operational_level(
+        OperationalLevel.TERMS
+    ).with_result(factor_seqs)
 
 
 def POWER_impl(
     node: Primitive,
     context: WilkinsonContext,
 ) -> WilkinsonContext:
-    """Handle power operations (polynomial terms)."""
-    return context
+    """
+    Power operations are currently lowered to CONCATENATE and INTERACTION.
+
+    This is here in case we find a more efficient way to handle power
+    operations as a primitive.
+    """
+    raise NotImplementedError("Power operations are not yet supported")
 
 
 def NAMED_FUNCTION_impl(
@@ -315,13 +339,13 @@ def test_formula_equivalence(wilkinson_expr: str, formulaic_expr: str = None):
     our_terms = list(our_result)
     formulaic_terms = list(formulaic_result)
     match = formulaic.Formula(our_terms) == formulaic.Formula(formulaic_terms)
-    if not match:
-        breakpoint()
 
     print(f"Wilkinson: '{wilkinson_expr}' -> {our_terms}")
     print(f"Formulaic: '{formulaic_expr}' -> {formulaic_terms}")
     print(f"Match: {match}")
     print()
+    if not match:
+        breakpoint()
 
     return match
 
@@ -342,6 +366,9 @@ def main():
         ("(rat*dog + cat:dog)^2", "(rat*dog + cat:dog)^2"),
         ("dog + cat + (rat*dog + cat:dog)^2", "dog + cat + (rat*dog + cat:dog)^2"),
         ("x + y - x - 1", "x + y - x - 1"),
+        ("(a + b + c) / (m + n) / (w + x + y + z)", "(a + b + c) / (m + n) / (w + x + y + z)"),
+        ("(x + (y + z + z:w)^2)^3", "(x + (y + z + z:w)^2)^3"),
+        ("(x + y + y:z)^3", "(x + y + y:z)^3"),
     ]
 
     all_passed = True

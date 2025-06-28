@@ -3,7 +3,7 @@
 # vi: set ft=python sts=4 ts=4 sw=4 et:
 """
 Wilkinson Grammar
-~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
 Comprehensive grammar for Wilkinson notation supporting statistical modeling.
 """
 from dataclasses import dataclass
@@ -32,7 +32,7 @@ Primitive, prim_registry = config_primitives()
 CONCATENATE = Primitive("CONCATENATE", is_associative=True)
 REMOVAL = Primitive("REMOVAL", is_associative=False)
 INTERACTION = Primitive("INTERACTION", is_associative=True)
-NESTED = Primitive("NESTED", is_associative=True)
+NESTED = Primitive("NESTED", is_associative=False)
 POWER = Primitive("POWER", is_associative=True)
 VARIABLE = Primitive("VARIABLE", is_terminal=True)
 NAMED_FUNCTION = Primitive("NAMED_FUNCTION")
