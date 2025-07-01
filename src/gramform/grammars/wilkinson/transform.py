@@ -22,7 +22,6 @@ from gramform.core import (
     CacheSubcontextMixin,
     ExecutionContext,
     InterpretersDispatch,
-    Literal,
     Primitive,
     TypedState,
     TransformProcessor,
@@ -99,12 +98,13 @@ def VARIABLE_impl(
     ).with_result(factor)
 
 
-def LITERAL_impl(
+def NUMERIC_LITERAL_impl(
     node: Primitive,
     context: WilkinsonContext,
 ) -> WilkinsonContext:
     """Handle literal nodes by creating a Factor for literal values."""
-    factor = Factor(str(node.value), eval_method="literal")
+    lit = node.get_parameters()
+    factor = Factor(str(lit.value), eval_method="literal")
     return context.set_operational_level(
         OperationalLevel.FACTOR
     ).with_result(factor)
@@ -292,7 +292,7 @@ def add_intercept_preprocessor(expr: str) -> str:
 # Register interpreters
 INTERPRETERS.register_interpreter('formulaic')
 INTERPRETERS.register_operation('__all__', 'VARIABLE', VARIABLE_impl)
-INTERPRETERS.register_operation('__all__', 'LITERAL', LITERAL_impl)
+INTERPRETERS.register_operation('__all__', 'NUMERIC_LITERAL', NUMERIC_LITERAL_impl)
 INTERPRETERS.register_operation('__all__', 'CONCATENATE', CONCATENATE_impl)
 INTERPRETERS.register_operation('__all__', 'REMOVAL', REMOVAL_impl)
 INTERPRETERS.register_operation('__all__', 'INTERACTION', INTERACTION_impl)

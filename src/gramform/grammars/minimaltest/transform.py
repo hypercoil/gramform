@@ -85,10 +85,6 @@ def VARIABLE_impl(node, context):
     return context.with_selection(state.select + [name])
 
 
-def LITERAL_impl(node, context):
-    return context.with_result(node.value)
-
-
 def RANGE_impl(node, context):
     expr_start, expr_end = node.get_parameters()
     start, context = expr_start(context).pop()
@@ -330,7 +326,6 @@ INTERPRETERS.register_operation('__all__', 'CONCATENATE', CONCATENATE_impl)
 INTERPRETERS.register_operation('__all__', 'POWER', POWER_impl)
 INTERPRETERS.register_operation('__all__', 'BACKDIFF', BACKDIFF_impl)
 INTERPRETERS.register_operation('__all__', 'VARIABLE', VARIABLE_impl)
-INTERPRETERS.register_operation('__all__', 'LITERAL', LITERAL_impl)
 INTERPRETERS.register_operation('__all__', 'RANGE', RANGE_impl)
 INTERPRETERS.register_operation('__all__', 'ENUM', ENUM_impl)
 INTERPRETERS.register_operation('__all__', 'INDICATOR', INDICATOR_impl)

@@ -85,7 +85,7 @@ def pop_state_and_return(t, grammar):
     return t
 
 
-def literal(dtype: Type, name: str = 'LITERAL', cast: callable = None):
+def literal(dtype: Type, cast: callable = None):
     """
     A production rule pattern used for literals.
 
@@ -94,7 +94,24 @@ def literal(dtype: Type, name: str = 'LITERAL', cast: callable = None):
     """
     def _inner(value):
         _cast = cast or dtype
-        return Literal.create(_cast(value), dtype, name=name)
+        return Literal.create(_cast(value), dtype)
+    return _inner
+
+
+def lift_literal(
+    dtype: Type,
+    prim: "Primitive",
+    cast: callable = None,
+):
+    """
+    A production rule pattern used for lifting literals.
+
+    Pattern:
+    construct : LITERAL
+    """
+    def _inner(value):
+        _cast = cast or dtype
+        return prim.bind(Literal.create(_cast(value), dtype))
     return _inner
 
 
@@ -267,6 +284,18 @@ class Primitive:
         else:
             return self.parameters
 
+    @property
+    def value(self) -> Any:
+        #TODO: Handle multiple levels of wrapping
+        param = self.parameters[0]
+        if (len(self.parameters) == 1) and isinstance(param, Literal):
+            return param.value
+        else:
+            raise ValueError(
+                f"Method `value` is not supported on "
+                f"non-literal wrapping primitive {self.name}"
+            )
+
     def __repr__(self):
         return wl.pformat(self)
 
@@ -308,7 +337,6 @@ class Primitive:
 
 @dataclasses.dataclass(frozen=True)
 class Literal:
-    name: str = 'LITERAL'
     value: Any = None
     dtype: Type | None = None
 
@@ -317,9 +345,9 @@ class Literal:
             object.__setattr__(self, 'dtype', type(self.value))
 
     @classmethod
-    def create(cls, *pparams, name: str = 'LITERAL'):
+    def create(cls, *pparams):
         value, dtype = pparams
-        return cls(value=value, dtype=dtype, name=name)
+        return cls(value=value, dtype=dtype)
 
     @property
     def is_terminal(self) -> bool:
@@ -335,11 +363,7 @@ class Literal:
         return hash((self.value, self.dtype))
 
     def __call__(self, context):
-        try:
-            context = context.interpreter[self.name](self, context)
-        except KeyError:
-            context = context.with_result(self.value)
-        return context
+        return context.with_result(self.value)
 
 
 @dataclasses.dataclass(frozen=True)
