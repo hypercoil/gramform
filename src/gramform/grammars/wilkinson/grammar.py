@@ -52,7 +52,8 @@ NAMED_FUNCTION = Primitive("NAMED_FUNCTION")
 EXECUTE = Primitive("EXECUTE", is_terminal=True)
 VARIABLE_COMPLEMENT = Primitive("VARIABLE_COMPLEMENT", is_terminal=True)
 UNARY_NEGATION = Primitive("UNARY_NEGATION", is_terminal=True)
-FUNCTION_PARAMETER = Primitive("FUNCTION_PARAMETER", is_terminal=True)
+PARAMETER = Primitive("PARAMETER", is_terminal=True)
+NAMED_PARAMETER = Primitive("NAMED_PARAMETER", is_terminal=True)
 FUNCTION_PARAMETERS = Primitive("FUNCTION_PARAMETERS", is_associative=True)
 
 
@@ -100,7 +101,7 @@ def parameterised_dot_named_function_bind(prim: CorePrimitive, *pparams):
     Pattern:
     construct : DOT name LPAREN construct parameters RPAREN
     """
-    def _inner(_, name, __, expr, ___, parameters, ____):
+    def _inner(_, name, __, expr, parameters, ____):
         return prim.bind(name, expr, parameters, *pparams)
     return _inner
 
@@ -407,9 +408,18 @@ class ExecutionComponent(GrammarComponent):
             dot_named_function_bind(NAMED_FUNCTION, OperationalLevel.FACTOR),
         ),
         ProductionRule(
-            'parameter_assign',
-            'parameter : NAME ASSIGN expression',
-            binop_infix(FUNCTION_PARAMETER),
+            'parameter_named',
+            'parameter : PARAM_SEPARATOR NAME ASSIGN expression',
+            lambda _, name, __, expr: NAMED_PARAMETER.bind(
+                name, expr
+            ),
+        ),
+        ProductionRule(
+            'parameter_positional',
+            'parameter : PARAM_SEPARATOR expression',
+            lambda _, expr: PARAMETER.bind(
+                expr
+            ),
         ),
         ProductionRule(
             'parameters_lift_parameter',
@@ -418,14 +428,16 @@ class ExecutionComponent(GrammarComponent):
         ),
         ProductionRule(
             'parameters_append_parameter',
-            'parameters : parameters PARAM_SEPARATOR parameter',
-            binop_infix(FUNCTION_PARAMETERS),
+            'parameters : parameters parameter',
+            lambda left, right: FUNCTION_PARAMETERS.bind(
+                left, right
+            ),
         ),
         ProductionRule(
             'factor_named_function_parameterised',
             (
                 'factor : '
-                'NAME LPAREN expression PARAM_SEPARATOR parameters RPAREN'
+                'NAME LPAREN expression parameters RPAREN'
             ),
             parameterised_named_function_bind(
                 NAMED_FUNCTION,
@@ -437,7 +449,7 @@ class ExecutionComponent(GrammarComponent):
             (
                 'factor : '
                 'EVAL_FUNC_ONLY_NAME '
-                'LPAREN expression PARAM_SEPARATOR parameters RPAREN'
+                'LPAREN expression parameters RPAREN'
             ),
             parameterised_named_function_bind(
                 NAMED_FUNCTION,
@@ -449,7 +461,7 @@ class ExecutionComponent(GrammarComponent):
             (
                 'factor : '
                 'DOT NAME '
-                'LPAREN expression PARAM_SEPARATOR parameters RPAREN'
+                'LPAREN expression parameters RPAREN'
             ),
             parameterised_dot_named_function_bind(
                 NAMED_FUNCTION,
@@ -461,7 +473,7 @@ class ExecutionComponent(GrammarComponent):
             (
                 'factor : '
                 'DOT EVAL_FUNC_ONLY_NAME '
-                'LPAREN expression PARAM_SEPARATOR parameters RPAREN'
+                'LPAREN expression parameters RPAREN'
             ),
             parameterised_dot_named_function_bind(
                 NAMED_FUNCTION,

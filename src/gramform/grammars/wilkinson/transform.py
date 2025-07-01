@@ -315,7 +315,18 @@ def POWER_impl(
     raise NotImplementedError("Power operations are not yet supported")
 
 
-def FUNCTION_PARAMETER_impl(
+def PARAMETER_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle parameters."""
+    value = node.get_parameters()
+    return context.set_operational_level(OperationalLevel.NONE).with_result(
+        f"{value(context).get_result()}"
+    )
+
+
+def NAMED_PARAMETER_impl(
     node: Primitive,
     context: WilkinsonContext,
 ) -> WilkinsonContext:
@@ -441,7 +452,8 @@ INTERPRETERS.register_operation('__all__', 'INTERACTION', INTERACTION_impl)
 INTERPRETERS.register_operation('__all__', 'NESTED', NESTED_impl)
 INTERPRETERS.register_operation('__all__', 'POWER', POWER_impl)
 INTERPRETERS.register_operation('__all__', 'NAMED_FUNCTION', NAMED_FUNCTION_impl)
-INTERPRETERS.register_operation('__all__', 'FUNCTION_PARAMETER', FUNCTION_PARAMETER_impl)
+INTERPRETERS.register_operation('__all__', 'PARAMETER', PARAMETER_impl)
+INTERPRETERS.register_operation('__all__', 'NAMED_PARAMETER', NAMED_PARAMETER_impl)
 INTERPRETERS.register_operation('__all__', 'FUNCTION_PARAMETERS', FUNCTION_PARAMETERS_impl)
 
 

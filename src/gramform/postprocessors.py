@@ -24,7 +24,7 @@ def ppr_associative_flatten(
             else:
                 yield child
 
-    if tree.is_terminal:
+    if not isinstance(tree, Primitive) or tree.is_terminal:
         return tree, context
     children = [
         ppr_associative_flatten(child, context)[0]
@@ -52,10 +52,12 @@ def ppr_common_subexpression(
             if child in subexpressions and not child.is_terminal:
                 children.append(subexpressions[child])
                 cache.add(child)
-            else:
+            elif isinstance(child, Primitive):
                 if not child.is_terminal:
                     child, subexpressions = _collect(child, subexpressions)
                     subexpressions[child] = child
+                children.append(child)
+            else:
                 children.append(child)
 
         return tree.bind(*children), subexpressions

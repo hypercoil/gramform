@@ -243,7 +243,7 @@ def parameterised_named_function_bind(prim: "Primitive", *pparams):
     Pattern:
     construct : name LPAREN construct parameters RPAREN
     """
-    def _inner(name, _, expr, __, parameters, ___):
+    def _inner(name, _, expr, parameters, __):
         return prim.bind(name, expr, parameters, *pparams)
     return _inner
 
