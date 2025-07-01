@@ -10,6 +10,7 @@ This is a proof of concept---formulaic's parser already supports Wilkinson
 notation---but we use it as a composable component in an extended Wilkinson
 grammar.
 """
+import ast
 import dataclasses
 from enum import Enum
 from typing import Any, Dict, Iterable, Tuple, Type
@@ -26,19 +27,19 @@ from gramform.core import (
     TypedState,
     TransformProcessor,
 )
-from gramform.grammars.wilkinson.grammar import WilkinsonGrammar, CONCATENATE
+from gramform.grammars.wilkinson.grammar import (
+    OperationalLevel,
+    WilkinsonGrammar,
+    UNARY_NEGATION,
+)
 from gramform.postprocessors import (
     ppr_associative_flatten,
     ppr_common_subexpression,
 )
 
 INTERPRETERS = InterpretersDispatch()
-
-
-class OperationalLevel(Enum):
-    FACTOR = 'factor'
-    TERM = 'term'
-    TERMS = 'terms'
+ZERO = Term(factors=[Factor("0", eval_method="literal")])
+ONE = Term(factors=[Factor("1", eval_method="literal")])
 
 
 class WilkinsonState(TypedState):
@@ -75,6 +76,8 @@ class WilkinsonContext(
                 return self.update_state(term=result)
             case OperationalLevel.TERMS:
                 return self.update_state(terms=result)
+            case OperationalLevel.NONE:
+                return self.update_state(eval=result)
 
     def get_result(self) -> Any:
         match self.state.operational_level:
@@ -84,6 +87,8 @@ class WilkinsonContext(
                 return self.state.term
             case OperationalLevel.TERMS:
                 return self.state.terms
+            case OperationalLevel.NONE:
+                return self.state.eval
 
 
 def VARIABLE_impl(
@@ -110,7 +115,54 @@ def NUMERIC_LITERAL_impl(
     ).with_result(factor)
 
 
-def CONCATENATE_impl(
+def standardise_code(code: str) -> str:
+    """Standardise code by removing whitespace and newlines."""
+    return ast.unparse(ast.parse(code, mode='eval')).replace('\n', ' ')
+
+
+def EXECUTE_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle execution of Python code."""
+    code = node.get_parameters()
+    code = standardise_code(code)
+    factor = Factor(code, eval_method="python")
+    return context.set_operational_level(
+        OperationalLevel.FACTOR
+    ).with_result(factor)
+
+
+def VARIABLE_COMPLEMENT_impl(
+    _: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle variable complement nodes by creating a Factor for lookup."""
+    term = Term(factors=[Factor('.', eval_method="lookup")])
+    return context.set_operational_level(
+        OperationalLevel.TERM
+    ).with_result(term)
+
+
+def UNARY_NEGATION_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle unary negation nodes by creating a Factor for lookup."""
+    child = node.get_parameters()
+    result = child(context).get_result()
+    if isinstance(result, Factor):
+        result = {Term(factors=[result]): None}
+    elif isinstance(result, Term):
+        result = {result: None}
+    elif isinstance(result, Iterable):
+        result = {e: None for e in result}
+    return context.set_operational_level(
+        OperationalLevel.TERMS
+    ).with_result(result)
+
+
+def APPEND_impl(
     node: Primitive,
     context: WilkinsonContext,
 ) -> WilkinsonContext:
@@ -118,40 +170,62 @@ def CONCATENATE_impl(
     all_terms = {}
 
     for child in node.get_parameters():
+        if child.name == UNARY_NEGATION.name:
+            all_terms = remove_terms(
+                all_terms,
+                child(context).get_result(),
+            )
+            continue
         result = child(context).get_result()
         if isinstance(result, Iterable):
-            all_terms.update(dict.fromkeys(result))
+            update = dict.fromkeys(result)
         elif isinstance(result, Term):
-            all_terms[result] = None
+            update = {result: None}
         elif isinstance(result, Factor):
-            all_terms[Term(factors=[result])] = None
+            update = {Term(factors=[result]): None}
         else:
             raise ValueError(f"Unexpected child result: {result}")
+        all_terms.update(update)
+        if ZERO in update:
+            del all_terms[ZERO]
+            if ONE in all_terms:
+                del all_terms[ONE]
 
     return context.set_operational_level(
         OperationalLevel.TERMS
     ).with_result(all_terms)
 
 
-def REMOVAL_impl(
-    node: Primitive,
-    context: WilkinsonContext,
-) -> WilkinsonContext:
-    """Handle removal of terms."""
-    expr, remove = node.get_parameters()
-    orig = expr(context).get_result()
-    if isinstance(orig, Term):
-        orig = {orig: None}
-    elif isinstance(orig, Factor):
+def remove_terms(
+    orig: Term | Factor | Iterable[Term | Factor],
+    remove: Term | Factor | Iterable[Term | Factor],
+) -> Dict[Term, None]:
+    if isinstance(orig, Factor):
         orig = {Term(factors=[orig]): None}
-    remove = remove(context).get_result()
+    elif isinstance(orig, Term):
+        orig = {orig: None}
     if isinstance(remove, Factor):
         remove = {Term(factors=[remove]): None}
     elif isinstance(remove, Term):
         remove = {remove: None}
     else:
         remove = {e: None for e in remove}
+    if ZERO in remove:
+        del remove[ZERO]
+        orig[ONE] = None
     result = {e: None for e in orig if e not in remove}
+    return result
+
+
+def REMOVE_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle removal of terms."""
+    expr, remove = node.get_parameters()
+    orig = expr(context).get_result()
+    remove = remove(context).get_result()
+    result = remove_terms(orig, remove)
     return context.set_operational_level(
         OperationalLevel.TERMS
     ).with_result(result)
@@ -233,7 +307,7 @@ def POWER_impl(
     context: WilkinsonContext,
 ) -> WilkinsonContext:
     """
-    Power operations are currently lowered to CONCATENATE and INTERACTION.
+    Power operations are currently lowered to APPEND and INTERACTION.
 
     This is here in case we find a more efficient way to handle power
     operations as a primitive.
@@ -241,12 +315,77 @@ def POWER_impl(
     raise NotImplementedError("Power operations are not yet supported")
 
 
+def FUNCTION_PARAMETER_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle parameters."""
+    name, value = node.get_parameters()
+    return context.set_operational_level(OperationalLevel.NONE).with_result(
+        f"{name}={value(context).get_result()}"
+    )
+
+
+def FUNCTION_PARAMETERS_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle parameters."""
+    parameters = [
+        param(context).get_result()
+        for param in node.get_parameters()
+    ]
+    dummy_call = f'f({", ".join(parameters)})'
+    parameters = f", {standardise_code(dummy_call)[2:-1]}"
+    return context.set_operational_level(OperationalLevel.NONE).with_result(
+        parameters
+    )
+
+
 def NAMED_FUNCTION_impl(
     node: Primitive,
     context: WilkinsonContext,
 ) -> WilkinsonContext:
     """Handle named function calls."""
-    return context
+    name, expr, *args, level = node.get_parameters()
+    argstr = args[0](context).get_result() if args else ""
+    result = expr(context).get_result()
+    if isinstance(result, Factor):
+        result = {Term(factors=[result]): None}
+    elif isinstance(result, Term):
+        result = {result: None}
+    elif isinstance(result, Iterable):
+        result = {e: None for e in result}
+    match level:
+        case OperationalLevel.FACTOR:
+            result = {
+                Term(
+                    factors=[
+                        Factor(f"{name}({f}{argstr})", eval_method="python")
+                        for f in e.factors
+                    ],
+                ): None
+                for e in result
+            }
+        case OperationalLevel.TERM:
+            result = {
+                Term(
+                    factors=[
+                        Factor(
+                            (
+                                f"{name}("
+                                f"{' * '.join(f.expr for f in e.factors)}"
+                                f"{argstr})"
+                            ),
+                            eval_method="python",
+                        ),
+                    ],
+                ): None
+                for e in result
+            }
+    return context.set_operational_level(
+        OperationalLevel.TERMS
+    ).with_result(result)
 
 
 def init_hook(
@@ -256,13 +395,13 @@ def init_hook(
 ) -> Tuple[Primitive, WilkinsonContext]:
     # if include_intercept:
     #     intercept = Literal.create(1, int)
-    #     if ast.name == CONCATENATE.name:
-    #         ast = CONCATENATE.bind(
+    #     if ast.name == APPEND.name:
+    #         ast = APPEND.bind(
     #             *ast.get_parameters(),
     #             intercept,
     #         )
     #     else:
-    #         ast = CONCATENATE.bind(
+    #         ast = APPEND.bind(
     #             ast,
     #             intercept,
     #         )
@@ -293,12 +432,17 @@ def add_intercept_preprocessor(expr: str) -> str:
 INTERPRETERS.register_interpreter('formulaic')
 INTERPRETERS.register_operation('__all__', 'VARIABLE', VARIABLE_impl)
 INTERPRETERS.register_operation('__all__', 'NUMERIC_LITERAL', NUMERIC_LITERAL_impl)
-INTERPRETERS.register_operation('__all__', 'CONCATENATE', CONCATENATE_impl)
-INTERPRETERS.register_operation('__all__', 'REMOVAL', REMOVAL_impl)
+INTERPRETERS.register_operation('__all__', 'EXECUTE', EXECUTE_impl)
+INTERPRETERS.register_operation('__all__', 'VARIABLE_COMPLEMENT', VARIABLE_COMPLEMENT_impl)
+INTERPRETERS.register_operation('__all__', 'UNARY_NEGATION', UNARY_NEGATION_impl)
+INTERPRETERS.register_operation('__all__', 'APPEND', APPEND_impl)
+INTERPRETERS.register_operation('__all__', 'REMOVE', REMOVE_impl)
 INTERPRETERS.register_operation('__all__', 'INTERACTION', INTERACTION_impl)
 INTERPRETERS.register_operation('__all__', 'NESTED', NESTED_impl)
 INTERPRETERS.register_operation('__all__', 'POWER', POWER_impl)
 INTERPRETERS.register_operation('__all__', 'NAMED_FUNCTION', NAMED_FUNCTION_impl)
+INTERPRETERS.register_operation('__all__', 'FUNCTION_PARAMETER', FUNCTION_PARAMETER_impl)
+INTERPRETERS.register_operation('__all__', 'FUNCTION_PARAMETERS', FUNCTION_PARAMETERS_impl)
 
 
 def get_processor():
@@ -365,8 +509,14 @@ def main():
         ("cat:dog", "cat:dog"),
         ("(rat*dog + cat:dog)^2", "(rat*dog + cat:dog)^2"),
         ("dog + cat + (rat*dog + cat:dog)^2", "dog + cat + (rat*dog + cat:dog)^2"),
+        ("y + bs(x) + bs(z) + bs(lag({w*x}))", "y + bs(x) + bs(z) + bs(lag(w*x))"),
+        ("y + bs(x) + bs(z) + bs(.lag(w*x))", "y + bs(x) + bs(z) + bs(lag(w)) + bs(lag(x)) + bs(lag(w)*lag(x))"),
         ("x + y - x - 1", "x + y - x - 1"),
+        ("x - 1 - y - 0", "x - 1 - y - 0"),
+        ("x + (y + 0)", "x + y + 0"), # + is associative in ours
+        ("x + -1 + y + 0", "x + -1 + y + 0"),
         ("(a + b + c) / (m + n) / (w + x + y + z)", "(a + b + c) / (m + n) / (w + x + y + z)"),
+        ("bs(x * y, df=4, degree=3)", "bs(x, df=4, degree=3) + bs(y, df=4, degree=3) + bs(x * y, df=4, degree=3)"),
         ("(x + (y + z + z:w)^2)^3", "(x + (y + z + z:w)^2)^3"),
         ("(x + y + y:z)^3", "(x + y + y:z)^3"),
     ]
@@ -377,6 +527,8 @@ def main():
             all_passed = False
 
     print(f"Overall result: {'PASS' if all_passed else 'FAIL'}")
+
+    formulaic.Formula('y + np.abs(x) + bs(x) + bs(z) + bs(lag(w*x, 1))').get_model_matrix(pd.DataFrame({"x": [0., -4., 5., -2.], "y": ["cat", "cat", "dog", "cat"], "z": [4, 4, 12, 1], "w": [3., 6., 9., -1.]}))
 
 
 if __name__ == '__main__':

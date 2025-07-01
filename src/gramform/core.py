@@ -115,7 +115,7 @@ def lift_literal(
     return _inner
 
 
-def unop_prefix(prim: "Primitive"):
+def unop_prefix(prim: "Primitive", *pparams):
     """
     A production rule pattern frequently used for unary prefix operations.
 
@@ -123,11 +123,11 @@ def unop_prefix(prim: "Primitive"):
     construct : OPERATOR construct
     """
     def _inner(_, right):
-        return prim.bind(right)
+        return prim.bind(right, *pparams)
     return _inner
 
 
-def unop_postfix(prim: "Primitive"):
+def unop_postfix(prim: "Primitive", *pparams):
     """
     A production rule pattern frequently used for unary postfix operations.
 
@@ -135,11 +135,11 @@ def unop_postfix(prim: "Primitive"):
     construct : construct OPERATOR
     """
     def _inner(left, _):
-        return prim.bind(left)
+        return prim.bind(left, *pparams)
     return _inner
 
 
-def binop_infix(prim: "Primitive"):
+def binop_infix(prim: "Primitive", *pparams):
     """
     A production rule pattern frequently used for binary infix operations.
 
@@ -147,11 +147,11 @@ def binop_infix(prim: "Primitive"):
     construct : construct_left OPERATOR construct_right
     """
     def _inner(left, _, right):
-        return prim.bind(left, right)
+        return prim.bind(left, right, *pparams)
     return _inner
 
 
-def binop_prefix(prim: "Primitive"):
+def binop_prefix(prim: "Primitive", *pparams):
     """
     A production rule pattern frequently used for binary prefix operations.
 
@@ -159,11 +159,11 @@ def binop_prefix(prim: "Primitive"):
     construct : OPERATOR construct_left construct_right
     """
     def _inner(_, left, right):
-        return prim.bind(left, right)
+        return prim.bind(left, right, *pparams)
     return _inner
 
 
-def binop_postfix(prim: "Primitive"):
+def binop_postfix(prim: "Primitive", *pparams):
     """
     A production rule pattern frequently used for binary postfix operations.
 
@@ -171,7 +171,7 @@ def binop_postfix(prim: "Primitive"):
     construct : construct_left construct_right OPERATOR
     """
     def _inner(left, right, _):
-        return prim.bind(left, right)
+        return prim.bind(left, right, *pparams)
     return _inner
 
 
@@ -200,7 +200,7 @@ def unit_lift():
     return _inner
 
 
-def named_function_call(prim: "Primitive"):
+def named_function_call(prim: "Primitive", *pparams):
     """
     A production rule pattern frequently used for function calls.
 
@@ -208,11 +208,23 @@ def named_function_call(prim: "Primitive"):
     construct : NAME LPAREN construct RPAREN
     """
     def _inner(_, __, expr, ___):
-        return prim.bind(expr)
+        return prim.bind(expr, *pparams)
     return _inner
 
 
-def named_function_bind(prim: "Primitive"):
+def parameterised_named_function_call(prim: "Primitive", *pparams):
+    """
+    A production rule pattern frequently used for function calls.
+
+    Pattern:
+    construct : NAME LPAREN construct parameters RPAREN
+    """
+    def _inner(_, __, expr, parameters, ___):
+        return prim.bind(expr, parameters, *pparams)
+    return _inner
+
+
+def named_function_bind(prim: "Primitive", *pparams):
     """
     A production rule pattern frequently used for function calls.
 
@@ -220,7 +232,19 @@ def named_function_bind(prim: "Primitive"):
     construct : name LPAREN construct RPAREN
     """
     def _inner(name, _, expr, __):
-        return prim.bind(name, expr)
+        return prim.bind(name, expr, *pparams)
+    return _inner
+
+
+def parameterised_named_function_bind(prim: "Primitive", *pparams):
+    """
+    A production rule pattern frequently used for function calls.
+
+    Pattern:
+    construct : name LPAREN construct parameters RPAREN
+    """
+    def _inner(name, _, expr, __, parameters, ___):
+        return prim.bind(name, expr, parameters, *pparams)
     return _inner
 
 
