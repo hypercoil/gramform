@@ -357,7 +357,11 @@ class ExecutionComponent(GrammarComponent):
         ),
         Token(
             'EVAL_FUNC_ONLY_NAME',
-            r'^[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*$',
+            (
+                r'[a-zA-Z_][a-zA-Z0-9_]*\.'
+                r'[a-zA-Z_][a-zA-Z0-9_]*'
+                r'(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*'
+            ),
             precedence=from_sequence,
             category='NAME',
         ),
