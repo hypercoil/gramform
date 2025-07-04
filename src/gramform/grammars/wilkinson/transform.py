@@ -11,8 +11,9 @@ notation---but we use it as a composable component in an extended Wilkinson
 grammar.
 """
 import ast
-import dataclasses
+import warnings
 from enum import Enum
+from functools import reduce, singledispatch
 from typing import Any, Dict, Iterable, Tuple, Type
 
 import formulaic
@@ -37,9 +38,149 @@ from gramform.postprocessors import (
     ppr_common_subexpression,
 )
 
-INTERPRETERS = InterpretersDispatch()
-ZERO = Term(factors=[Factor("0", eval_method="literal")])
-ONE = Term(factors=[Factor("1", eval_method="literal")])
+INTERPRETERS : InterpretersDispatch = InterpretersDispatch()
+ZERO : Term = Term(
+    factors=[Factor("0", eval_method=Factor.EvalMethod.LITERAL)],
+)
+ONE : Term = Term(
+    factors=[Factor("1", eval_method=Factor.EvalMethod.LITERAL)],
+)
+
+
+class InvalidPromotion(ValueError):
+    """Exception raised when a promotion is invalid."""
+    pass
+
+
+@singledispatch
+def to_term(arg: Iterable[Factor]) -> Term:
+    variables = [
+        f for f in arg
+        if f.eval_method != Factor.EvalMethod.LITERAL
+    ]
+    # Collapse literals into a single factor
+    literals = [
+        f for f in arg
+        if f.eval_method == Factor.EvalMethod.LITERAL
+    ]
+    if literals:
+        literal = reduce(
+            lambda x, y: x * y,
+            [
+                float(f.expr) if '.' in f.expr
+                else int(f.expr)
+                for f in literals],
+            1,
+        )
+        literals = [
+            Factor(str(literal), eval_method=Factor.EvalMethod.LITERAL)
+        ]
+    return Term(factors=(literals + variables))
+
+@to_term.register
+def _(arg: Factor) -> Term:
+    return Term(factors=[arg])
+
+@to_term.register
+def _(arg: Term) -> Term:
+    return arg
+
+@to_term.register
+def _(arg: dict) -> Term:
+    raise InvalidPromotion(
+        f"Cannot promote a sequence of Terms to a Term: {arg}"
+    )
+
+@to_term.register
+def _(arg: Any) -> Term:
+    raise InvalidPromotion(
+        f"Cannot promote an object of type {type(arg)} to a Term: {arg}"
+    )
+
+
+@singledispatch
+def to_terms(arg: dict) -> Dict[Term, None]:
+    # Ensure no terms are duplicated, or duplicated up to a constant factor
+    # so we disallow structural singularities.
+    scales = {}
+    keys = {}
+    to_remove = []
+    for t in arg:
+        literals = [
+            f for f in t.factors
+            if f.eval_method == Factor.EvalMethod.LITERAL
+        ]
+        variables = [
+            f for f in t.factors
+            if f.eval_method != Factor.EvalMethod.LITERAL
+        ]
+        variables = tuple(sorted(variables, key=lambda x: x.expr))
+        scaled = scales.get(variables, None)
+        #TODO
+        # I think we're hitting this block more frequently than we need to.
+        # We can worry about optimising this later. In practice the parse
+        # time is very small compared to steps like model matrix
+        # generation.
+        # # print(f"variables: {variables}")
+        # # print(f"literals: {literals}")
+        # # print(f"scaled: {scaled}")
+        if literals:
+            scale = reduce(
+                lambda x, y: x * y,
+                [
+                    float(f.expr) if '.' in f.expr else int(f.expr)
+                    for f in literals
+                ]
+            )
+            if not variables and scale != 1:
+                # intercept term: we should only allow a scale of 1
+                warnings.warn(
+                    f"Constant term {t} was interpreted as a scale of "
+                    f"{scale}, but only an intercept constant (scale of 1) "
+                    f"is allowed. This term has been removed from the "
+                    "formula automatically."
+                )
+                instances_to_remove = [t]
+            elif scaled is not None:
+                raise InvalidPromotion(
+                    f"Attempting to scale term {Term(variables)} by {scale}, "
+                    f"but {Term(variables)} has already been scaled by "
+                    f"{scaled}"
+                )
+            else:
+                scales[variables] = scale
+                instances_to_remove = keys.get(variables, [])
+            for instance in instances_to_remove:
+                # Replace the instance with the scaled version if
+                # both are present
+                to_remove.append(instance)
+                # arg[instance] = Term(
+                #     factors=[
+                #         Factor(
+                #             str(scale),
+                #             eval_method=Factor.EvalMethod.LITERAL,
+                #         )
+                #     ] + arg[instance].factors
+                # )
+        keys[variables] = keys.get(variables, []) + [t]
+    for instance in to_remove:
+        del arg[instance]
+    return {t: None for t in arg}
+
+@to_terms.register
+def _(arg: Term) -> Dict[Term, None]:
+    return {arg: None}
+
+@to_terms.register
+def _(arg: Factor) -> Dict[Term, None]:
+    return {Term(factors=[arg]): None}
+
+@to_terms.register
+def _(arg: Any) -> Dict[Term, None]:
+    raise InvalidPromotion(
+        f"Cannot promote an object of type {type(arg)} to a sequence of "
+        f"Terms: {arg}"
+    )
 
 
 class WilkinsonState(TypedState):
@@ -91,144 +232,22 @@ class WilkinsonContext(
                 return self.state.eval
 
 
-def VARIABLE_impl(
-    node: Primitive,
-    context: WilkinsonContext,
-) -> WilkinsonContext:
-    """Handle variable nodes by creating a Factor for lookup."""
-    name = node.get_parameters()
-    factor = Factor(name, eval_method="lookup")
-    return context.set_operational_level(
-        OperationalLevel.FACTOR
-    ).with_result(factor)
-
-
-def NUMERIC_LITERAL_impl(
-    node: Primitive,
-    context: WilkinsonContext,
-) -> WilkinsonContext:
-    """Handle literal nodes by creating a Factor for literal values."""
-    lit = node.get_parameters()
-    factor = Factor(str(lit.value), eval_method="literal")
-    return context.set_operational_level(
-        OperationalLevel.FACTOR
-    ).with_result(factor)
-
-
 def standardise_code(code: str) -> str:
     """Standardise code by removing whitespace and newlines."""
     return ast.unparse(ast.parse(code, mode='eval')).replace('\n', ' ')
-
-
-def EXECUTE_impl(
-    node: Primitive,
-    context: WilkinsonContext,
-) -> WilkinsonContext:
-    """Handle execution of Python code."""
-    code = node.get_parameters()
-    code = standardise_code(code)
-    factor = Factor(code, eval_method="python")
-    return context.set_operational_level(
-        OperationalLevel.FACTOR
-    ).with_result(factor)
-
-
-def VARIABLE_COMPLEMENT_impl(
-    _: Primitive,
-    context: WilkinsonContext,
-) -> WilkinsonContext:
-    """Handle variable complement nodes by creating a Factor for lookup."""
-    term = Term(factors=[Factor('.', eval_method="lookup")])
-    return context.set_operational_level(
-        OperationalLevel.TERM
-    ).with_result(term)
-
-
-def UNARY_NEGATION_impl(
-    node: Primitive,
-    context: WilkinsonContext,
-) -> WilkinsonContext:
-    """Handle unary negation nodes by creating a Factor for lookup."""
-    child = node.get_parameters()
-    result = child(context).get_result()
-    if isinstance(result, Factor):
-        result = {Term(factors=[result]): None}
-    elif isinstance(result, Term):
-        result = {result: None}
-    elif isinstance(result, Iterable):
-        result = {e: None for e in result}
-    return context.set_operational_level(
-        OperationalLevel.TERMS
-    ).with_result(result)
-
-
-def APPEND_impl(
-    node: Primitive,
-    context: WilkinsonContext,
-) -> WilkinsonContext:
-    """Handle concatenation (union) of terms."""
-    all_terms = {}
-
-    for child in node.get_parameters():
-        if child.name == UNARY_NEGATION.name:
-            all_terms = remove_terms(
-                all_terms,
-                child(context).get_result(),
-            )
-            continue
-        result = child(context).get_result()
-        if isinstance(result, Iterable):
-            update = dict.fromkeys(result)
-        elif isinstance(result, Term):
-            update = {result: None}
-        elif isinstance(result, Factor):
-            update = {Term(factors=[result]): None}
-        else:
-            raise ValueError(f"Unexpected child result: {result}")
-        all_terms.update(update)
-        if ZERO in update:
-            del all_terms[ZERO]
-            if ONE in all_terms:
-                del all_terms[ONE]
-
-    return context.set_operational_level(
-        OperationalLevel.TERMS
-    ).with_result(all_terms)
 
 
 def remove_terms(
     orig: Term | Factor | Iterable[Term | Factor],
     remove: Term | Factor | Iterable[Term | Factor],
 ) -> Dict[Term, None]:
-    if isinstance(orig, Factor):
-        orig = {Term(factors=[orig]): None}
-    elif isinstance(orig, Term):
-        orig = {orig: None}
-    if isinstance(remove, Factor):
-        remove = {Term(factors=[remove]): None}
-    elif isinstance(remove, Term):
-        remove = {remove: None}
-    else:
-        remove = {e: None for e in remove}
+    orig = to_terms(orig)
+    remove = to_terms(remove)
     if ZERO in remove:
         del remove[ZERO]
         orig[ONE] = None
     result = {e: None for e in orig if e not in remove}
     return result
-
-
-def REMOVE_impl(
-    node: Primitive,
-    context: WilkinsonContext,
-) -> WilkinsonContext:
-    """Handle removal of terms."""
-    expr, remove = node.get_parameters()
-    orig = expr(context).get_result()
-    remove = remove(context).get_result()
-    result = remove_terms(orig, remove)
-    return context.set_operational_level(
-        OperationalLevel.TERMS
-    ).with_result(result)
 
 
 def build_factor_seqs(
@@ -252,6 +271,108 @@ def build_factor_seqs(
     return seqs
 
 
+def VARIABLE_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle variable nodes by creating a Factor for lookup."""
+    name = node.get_parameters()
+    factor = Factor(name, eval_method=Factor.EvalMethod.LOOKUP)
+    return context.set_operational_level(
+        OperationalLevel.FACTOR
+    ).with_result(factor)
+
+
+def NUMERIC_LITERAL_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle literal nodes by creating a Factor for literal values."""
+    lit = node.get_parameters()
+    factor = Factor(str(lit.value), eval_method=Factor.EvalMethod.LITERAL)
+    return context.set_operational_level(
+        OperationalLevel.FACTOR
+    ).with_result(factor)
+
+
+def EXECUTE_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle execution of Python code."""
+    code = node.get_parameters()
+    code = standardise_code(code)
+    factor = Factor(code, eval_method=Factor.EvalMethod.PYTHON)
+    return context.set_operational_level(
+        OperationalLevel.FACTOR
+    ).with_result(factor)
+
+
+def VARIABLE_COMPLEMENT_impl(
+    _: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle variable complement nodes by creating a Factor for lookup."""
+    term = to_term(Factor('.', eval_method=Factor.EvalMethod.LOOKUP))
+    return context.set_operational_level(
+        OperationalLevel.TERM
+    ).with_result(term)
+
+
+def UNARY_NEGATION_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle unary negation nodes by creating a Factor for lookup."""
+    child = node.get_parameters()
+    result = child(context).get_result()
+    result = to_terms(result)
+    return context.set_operational_level(
+        OperationalLevel.TERMS
+    ).with_result(result)
+
+
+def APPEND_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle concatenation (union) of terms."""
+    all_terms = {}
+
+    for child in node.get_parameters():
+        if child.name == UNARY_NEGATION.name:
+            all_terms = remove_terms(
+                all_terms,
+                child(context).get_result(),
+            )
+            continue
+        result = child(context).get_result()
+        update = to_terms(result)
+        all_terms.update(update)
+        if ZERO in update:
+            del all_terms[ZERO]
+            if ONE in all_terms:
+                del all_terms[ONE]
+
+    return context.set_operational_level(
+        OperationalLevel.TERMS
+    ).with_result(to_terms(all_terms))
+
+
+def REMOVE_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Handle removal of terms."""
+    expr, remove = node.get_parameters()
+    orig = expr(context).get_result()
+    remove = remove(context).get_result()
+    result = remove_terms(orig, remove)
+    return context.set_operational_level(
+        OperationalLevel.TERMS
+    ).with_result(result)
+
+
 def INTERACTION_impl(
     node: Primitive,
     context: WilkinsonContext,
@@ -272,10 +393,10 @@ def INTERACTION_impl(
             for b in new_seqs
         }
 
-    factor_seqs = {Term(factors=seq): None for seq in factor_seqs}
+    factor_seqs = {to_term(seq): None for seq in factor_seqs}
     return context.set_operational_level(
         OperationalLevel.TERMS
-    ).with_result(factor_seqs)
+    ).with_result(to_terms(factor_seqs))
 
 
 def NESTED_impl(
@@ -294,12 +415,12 @@ def NESTED_impl(
     left_reduced = sum(left_factors.keys(), ())
 
     factor_seqs = {
-        **{Term(factors=a): None for a in left_factors},
-        **{Term(factors=left_reduced + b): None for b in right_factors},
+        **{to_term(a): None for a in left_factors},
+        **{to_term(left_reduced + b): None for b in right_factors},
     }
     return context.set_operational_level(
         OperationalLevel.TERMS
-    ).with_result(factor_seqs)
+    ).with_result(to_terms(factor_seqs))
 
 
 def POWER_impl(
@@ -361,39 +482,33 @@ def NAMED_FUNCTION_impl(
     name, expr, *args, level = node.get_parameters()
     argstr = args[0](context).get_result() if args else ""
     result = expr(context).get_result()
-    if isinstance(result, Factor):
-        result = {Term(factors=[result]): None}
-    elif isinstance(result, Term):
-        result = {result: None}
-    elif isinstance(result, Iterable):
-        result = {e: None for e in result}
+    result = to_terms(result)
     match level:
         case OperationalLevel.FACTOR:
-            result = {
-                Term(
-                    factors=[
-                        Factor(f"{name}({f}{argstr})", eval_method="python")
-                        for f in e.factors
-                    ],
-                ): None
+            result = to_terms({
+                to_term([
+                    Factor(
+                        f"{name}({f}{argstr})",
+                        eval_method=Factor.EvalMethod.PYTHON,
+                    )
+                    for f in e.factors
+                ]): None
                 for e in result
-            }
+            })
         case OperationalLevel.TERM:
-            result = {
-                Term(
-                    factors=[
-                        Factor(
-                            (
-                                f"{name}("
-                                f"{' * '.join(f.expr for f in e.factors)}"
-                                f"{argstr})"
-                            ),
-                            eval_method="python",
+            result = to_terms({
+                to_term([
+                    Factor(
+                        (
+                            f"{name}("
+                            f"{' * '.join(f.expr for f in e.factors)}"
+                            f"{argstr})"
                         ),
-                    ],
-                ): None
+                        eval_method=Factor.EvalMethod.PYTHON,
+                    )
+                ]): None
                 for e in result
-            }
+            })
     return context.set_operational_level(
         OperationalLevel.TERMS
     ).with_result(result)
