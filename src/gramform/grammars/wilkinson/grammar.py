@@ -34,6 +34,7 @@ class OperationalLevel(Enum):
     FACTOR = 'factor'
     TERM = 'term'
     TERMS = 'terms'
+    BLOCK = 'block'
     NONE = 'none'
 
 
@@ -55,9 +56,15 @@ UNARY_NEGATION = Primitive("UNARY_NEGATION", is_terminal=True)
 PARAMETER = Primitive("PARAMETER", is_terminal=True)
 NAMED_PARAMETER = Primitive("NAMED_PARAMETER", is_terminal=True)
 FUNCTION_PARAMETERS = Primitive("FUNCTION_PARAMETERS", is_associative=True)
+LHS_RHS_STRUCTURE = Primitive("LHS_RHS_STRUCTURE", is_associative=False)
+SUBPARTS_STRUCTURE = Primitive("SUBPARTS_STRUCTURE", is_associative=False)
+RESIDUAL_STRUCTURE = Primitive("RESIDUAL_STRUCTURE", is_associative=False)
 
 
 TOKEN_PRECEDENCE = (
+    # ↑ lowest precedence
+    ('LHS_RHS_SEPARATOR', 'LHS_RESIDUAL_RHS'),
+    'PARTS_SEPARATOR',
     'DOT',
     'PARAM_SEPARATOR',
     ('APPEND', 'REMOVE'),
@@ -71,6 +78,7 @@ TOKEN_PRECEDENCE = (
     'INTEGER_LITERAL',
     'FLOAT_LITERAL',
     'EXECUTE',
+    # ↓ highest precedence
 )
 from_sequence, with_precedence = precedence_from_sequence(TOKEN_PRECEDENCE)
 
@@ -483,15 +491,75 @@ class ExecutionComponent(GrammarComponent):
     )
 
 
+@dataclass(frozen=True)
+class StructureComponent(GrammarComponent):
+    """Component for structuring formulae."""
+    tokens: Tuple[Token, ...] = (
+        Token(
+            'LHS_RHS_SEPARATOR',
+            r'~',
+            precedence=from_sequence,
+            category='STRUCTURE',
+        ),
+        Token(
+            'PARTS_SEPARATOR',
+            r'\|',
+            precedence=from_sequence,
+            category='STRUCTURE',
+        ),
+        Token(
+            'LHS_RESIDUAL_RHS',
+            r'~\|',
+            precedence=from_sequence,
+            category='STRUCTURE',
+        ),
+    )
+
+    production_rules: Tuple[ProductionRule, ...] = (
+        ProductionRule(
+            'formula_blocks',
+            'formula : blocks',
+            unit_lift(),
+        ),
+        ProductionRule(
+            'formula_lhs_rhs',
+            'formula : blocks LHS_RHS_SEPARATOR blocks',
+            binop_infix(LHS_RHS_STRUCTURE),
+        ),
+        ProductionRule(
+            'formula_lhs_residual_rhs',
+            'formula : blocks LHS_RESIDUAL_RHS blocks',
+            binop_infix(RESIDUAL_STRUCTURE),
+        ),
+        ProductionRule(
+            'blocks_block',
+            'blocks : block',
+            unit_lift(),
+        ),
+        ProductionRule(
+            'blocks_parts',
+            'blocks : blocks PARTS_SEPARATOR block',
+            binop_infix(SUBPARTS_STRUCTURE),
+        ),
+        ProductionRule(
+            'block_expression',
+            'block : expression',
+            unit_lift(),
+        ),
+    )
+
+
 class WilkinsonGrammar(DynamicGrammar):
     """Grammar for Wilkinson notation."""
     def __init__(self):
         super().__init__(
+            start_symbol='formula',
             components=(
                 LiteralTerminalsComponent(),
                 BasicOperatorsComponent(),
                 NamesComponent(),
                 ExecutionComponent(),
+                StructureComponent(),
             ),
         )
 

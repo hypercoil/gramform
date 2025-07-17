@@ -12,12 +12,12 @@ grammar.
 """
 import ast
 import warnings
-from enum import Enum
 from functools import reduce, singledispatch
-from typing import Any, Dict, Iterable, Tuple, Type
+from typing import Any, Dict, Iterable, NamedTuple, Tuple, Type
 
 import formulaic
 from formulaic.parser.types import Factor, Term
+from formulaic.utils.structured import Structured
 from pydantic import Field
 
 from gramform.core import (
@@ -99,7 +99,14 @@ def _(arg: Any) -> Term:
 
 
 @singledispatch
-def to_terms(arg: dict) -> Dict[Term, None]:
+def to_terms(arg: Any) -> Dict[Term, None]:
+    raise InvalidPromotion(
+        f"Cannot promote an object of type {type(arg)} to a sequence of "
+        f"Terms: {arg}"
+    )
+
+@to_terms.register
+def _(arg: dict) -> Dict[Term, None]:
     # Ensure no terms are duplicated, or duplicated up to a constant factor
     # so we disallow structural singularities.
     scales = {}
@@ -176,17 +183,25 @@ def _(arg: Factor) -> Dict[Term, None]:
     return {Term(factors=[arg]): None}
 
 @to_terms.register
-def _(arg: Any) -> Dict[Term, None]:
-    raise InvalidPromotion(
-        f"Cannot promote an object of type {type(arg)} to a sequence of "
-        f"Terms: {arg}"
-    )
+def _(arg: formulaic.SimpleFormula) -> Dict[Term, None]:
+    # Technically this is an invalid promotion, because we're not
+    # returning a sequence of Terms. But the only place this comes up,
+    # we want to keep the SimpleFormula as is.
+    return arg
+
+@to_terms.register
+def _(arg: Structured) -> Dict[Term, None]:
+    # Technically this is an invalid promotion, because we're not
+    # returning a sequence of Terms. But the only place this comes up,
+    # we want to keep the Structured as is.
+    return arg
 
 
 class WilkinsonState(TypedState):
     factor: Factor | None = None
     term: Term | None = None
-    terms: Dict[Term, None] | formulaic.Formula = Field(default_factory=dict)
+    terms: Dict[Term, None] = Field(default_factory=dict)
+    block: Dict[Term, None] | formulaic.Formula = Field(default_factory=dict)
     operational_level: OperationalLevel = Field(
         default=OperationalLevel.FACTOR
     )
@@ -217,6 +232,8 @@ class WilkinsonContext(
                 return self.update_state(term=result)
             case OperationalLevel.TERMS:
                 return self.update_state(terms=result)
+            case OperationalLevel.BLOCK:
+                return self.update_state(block=result)
             case OperationalLevel.NONE:
                 return self.update_state(eval=result)
 
@@ -228,6 +245,14 @@ class WilkinsonContext(
                 return self.state.term
             case OperationalLevel.TERMS:
                 return self.state.terms
+            case OperationalLevel.BLOCK:
+                return self.state.block
+                result = self.state.block
+                if isinstance(result, Structured):
+                    # Remove the Structured wrapper
+                    return result._structure
+                else:
+                    return result
             case OperationalLevel.NONE:
                 return self.state.eval
 
@@ -269,6 +294,23 @@ def build_factor_seqs(
     else:
         raise ValueError(f"Unexpected child result: {candidates}")
     return seqs
+
+
+def build_simple_formula(
+    result: Any,
+    context: WilkinsonContext,
+) -> Tuple[Any, bool]:
+    if context.state.operational_level == OperationalLevel.FACTOR:
+        result = [Term(factors=[result])]
+    elif context.state.operational_level == OperationalLevel.TERM:
+        result = [result]
+    elif context.state.operational_level == OperationalLevel.BLOCK:
+        # If it's a formula block, that implies complex structure that cannot
+        # be represented as a simple formula.
+        result = result._structure
+        return result.get('root', result), False
+    result = sorted(list(result), key=lambda t: len(t.factors))
+    return formulaic.SimpleFormula(result), True
 
 
 def VARIABLE_impl(
@@ -514,6 +556,62 @@ def NAMED_FUNCTION_impl(
     ).with_result(result)
 
 
+def LHS_RHS_STRUCTURE_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Assign subparts of the formula to the LHS and RHS."""
+    lhs_expr, rhs_expr = node.get_parameters()
+    context = lhs_expr(context)
+    lhs, _ = build_simple_formula(context.get_result(), context)
+    context = rhs_expr(context)
+    rhs, _ = build_simple_formula(context.get_result(), context)
+    result = Structured(
+        lhs=lhs,
+        rhs=rhs,
+    )
+    return context.set_operational_level(
+        OperationalLevel.BLOCK
+    ).with_result(result)
+
+
+def RESIDUAL_STRUCTURE_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Assign subparts of the formula to the LHS and RHS."""
+    residualise_expr, wrt_expr = node.get_parameters()
+    context = residualise_expr(context)
+    residualise, _ = build_simple_formula(context.get_result(), context)
+    context = wrt_expr(context)
+    wrt, _ = build_simple_formula(context.get_result(), context)
+    result = Structured(
+        residualise=residualise,
+        wrt=wrt,
+    )
+    return context.set_operational_level(
+        OperationalLevel.BLOCK
+    ).with_result(result)
+
+
+def SUBPARTS_STRUCTURE_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Assign subparts of the formula to the LHS and RHS."""
+    subparts = []
+    for child in node.get_parameters():
+        context = child(context)
+        result = context.get_result()
+        result = to_terms(result)
+        result, _ = build_simple_formula(result, context)
+        subparts.append(result)
+    result = Structured(tuple(subparts))
+    return context.set_operational_level(
+        OperationalLevel.BLOCK
+    ).with_result(result)
+
+
 def init_hook(
     ast: Primitive,
     context: WilkinsonContext,
@@ -540,18 +638,49 @@ def finalise_hook(
     context: WilkinsonContext,
 ) -> WilkinsonContext:
     result = context.get_result()
-    if context.state.operational_level == OperationalLevel.FACTOR:
-        result = [Term(factors=[result])]
-    elif context.state.operational_level == OperationalLevel.TERM:
-        result = [result]
-    result = sorted(list(result), key=lambda t: len(t.factors))
-    return context.set_operational_level(
-        OperationalLevel.TERMS
-    ).with_result(formulaic.Formula(result))
+    result, is_simple_formula = build_simple_formula(result, context)
+    if is_simple_formula:
+        return context.set_operational_level(
+            OperationalLevel.BLOCK
+        ).with_result(result)
+    else:
+        return context.set_operational_level(
+            OperationalLevel.BLOCK
+        ).with_result(formulaic.Formula(result))
+
+
+class InterceptExprSeparator(NamedTuple):
+    sep: str
+    rhs_only: bool
+
+
+def _add_intercept(expr: str, sep_queue: list[str]) -> str:
+    if not sep_queue: # terminal case
+        return f'1 + {expr}'
+    else:
+        (sep, rhs_only), sep_queue = sep_queue[0], sep_queue[1:]
+        parts = expr.split(sep)
+        if rhs_only and len(parts) > 1:
+            return sep.join([
+                parts[0],
+                *[_add_intercept(part, sep_queue) for part in parts[1:]],
+            ])
+        else:
+            return sep.join([
+                _add_intercept(e, sep_queue)
+                for e in parts
+            ])
 
 
 def add_intercept_preprocessor(expr: str) -> str:
-    return f"1 + {expr}"
+    return _add_intercept(
+        expr,
+        (
+            InterceptExprSeparator(r'~|', True),
+            InterceptExprSeparator(r'~', True),
+            InterceptExprSeparator(r'|', False),
+        ),
+    )
 
 
 # Register interpreters
@@ -570,6 +699,9 @@ INTERPRETERS.register_operation('__all__', 'NAMED_FUNCTION', NAMED_FUNCTION_impl
 INTERPRETERS.register_operation('__all__', 'PARAMETER', PARAMETER_impl)
 INTERPRETERS.register_operation('__all__', 'NAMED_PARAMETER', NAMED_PARAMETER_impl)
 INTERPRETERS.register_operation('__all__', 'FUNCTION_PARAMETERS', FUNCTION_PARAMETERS_impl)
+INTERPRETERS.register_operation('__all__', 'LHS_RHS_STRUCTURE', LHS_RHS_STRUCTURE_impl)
+INTERPRETERS.register_operation('__all__', 'RESIDUAL_STRUCTURE', RESIDUAL_STRUCTURE_impl)
+INTERPRETERS.register_operation('__all__', 'SUBPARTS_STRUCTURE', SUBPARTS_STRUCTURE_impl)
 
 
 def get_processor():

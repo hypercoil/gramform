@@ -912,6 +912,9 @@ class GrammarComponent:
 class DynamicGrammar:
     """A grammar composed from multiple components."""
     components: Tuple[GrammarComponent, ...]
+    start_symbol: str | None = dataclasses.field(
+        default=None,
+    )
     error_handler: GrammarErrorHandler = dataclasses.field(
         default_factory=GrammarErrorHandler
     )
@@ -953,6 +956,13 @@ class DynamicGrammar:
         for component in built_components[1:]:
             base = base.merge(component)
         object.__setattr__(self, 'productions', base.production_rules)
+
+        if self.start_symbol is not None:
+            object.__setattr__(
+                self,
+                'start',
+                self.start_symbol,
+            )
 
         # Set up PLY-compatible grammar attributes
         object.__setattr__(

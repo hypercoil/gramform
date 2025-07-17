@@ -12,6 +12,8 @@ from gramform.grammars.wilkinson.transform import get_processor
 
 def compare_formulas(our_result, formulaic_result, comparison_type="exact"):
     """Compare our result with formulaic result using specified comparison type."""
+    if comparison_type == "structured":
+        return our_result == formulaic_result
     our_terms = list(our_result)
     formulaic_terms = list(formulaic_result)
     if comparison_type == "exact":
@@ -114,6 +116,24 @@ FUNCTION_CALLS = [
 @pytest.mark.parametrize("wilkinson_expr,formulaic_expr,comparison_type", FUNCTION_CALLS)
 def test_function_calls(wilkinson_expr, formulaic_expr, comparison_type):
     """Test function calls and special syntax."""
+    _test_formula_equivalence(wilkinson_expr, formulaic_expr, comparison_type)
+
+
+STRUCTURED_FORMULAE = [
+    ("y ~ x", "y ~ x", "structured"),
+    ("y ~ x + z", "y ~ x + z", "structured"),
+    ("y ~ x + z | w + v", "y ~ x + z | w + v", "structured"),
+    (
+        "y ~ dog + cat + (rat*dog + cat:dog)^2 | v + bs(x) + bs(z) + bs(lag({w*x}))",
+        "y ~ dog + cat + (rat*dog + cat:dog)^2 | v + bs(x) + bs(z) + bs(lag(w*x))",
+        "structured"
+    ),
+]
+
+
+@pytest.mark.parametrize("wilkinson_expr,formulaic_expr,comparison_type", STRUCTURED_FORMULAE)
+def test_structured_formulae(wilkinson_expr, formulaic_expr, comparison_type):
+    """Test structured formulae."""
     _test_formula_equivalence(wilkinson_expr, formulaic_expr, comparison_type)
 
 
