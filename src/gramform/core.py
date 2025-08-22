@@ -1117,6 +1117,8 @@ class DynamicGrammar:
 
 class Subcontext(BaseModel):
     """Base class for composable execution context features."""
+    next: Optional['Subcontext'] = None
+    previous: Optional['Subcontext'] = None
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def get_state(self) -> Dict[str, Any]:
@@ -1235,7 +1237,7 @@ class ExecutionContext(BaseModel):
             if hasattr(parent, '__add_subcontext__'):
                 parent.__add_subcontext__(self)
 
-    def pop(self, *pparams):
+    def pop_result(self, *pparams):
         """Pop values from the context state."""
         result, state = self.state.pop(*pparams)
         return result, self.with_state(state)
@@ -1288,6 +1290,152 @@ class ExecutionContext(BaseModel):
     def get_subcontext(self, name: str) -> Optional[Subcontext]:
         """Get a subcontext by name."""
         return self.subcontexts.get(f"__subcontext_{name}", None)
+
+    def _inherit_interpreter(
+        self,
+    ) -> 'ExecutionContext':
+        return self.__class__(interpreter=self.interpreter)
+
+    def push(
+        self,
+        frame: 'ExecutionContext' | Type['ExecutionContext'] | None = None,
+    ) -> 'ContextFrameStack':
+        """Push a frame onto the stack."""
+        if frame is None:
+            frame = self.__class__(interpreter=self.interpreter)
+        elif isinstance(frame, Type):
+            frame = frame(interpreter=self.interpreter)
+        return ContextFrameStack(
+            frames=[self, frame],
+            frame_factory=self.__class__,
+        )
+
+    def pop(self) -> Tuple['ExecutionContext', 'ExecutionContext']:
+        """Pop a frame from the stack."""
+        raise ValueError("Removal of the bottom frame is not allowed")
+
+
+class ContextFrameStack(BaseModel):
+    """Stack of context frames."""
+    frames: List[ExecutionContext] = Field(default_factory=list)
+    frame_factory: Type[ExecutionContext] = ExecutionContext
+
+    def push(
+        self,
+        frame: ExecutionContext | Type[ExecutionContext] | None = None,
+    ) -> 'ContextFrameStack':
+        """Push a frame onto the stack."""
+        if frame is None:
+            frame = self.frame_factory(interpreter=self.interpreter)
+        elif isinstance(frame, Type):
+            frame = frame(interpreter=self.interpreter)
+        return self.model_copy(update={'frames': [*self.frames, frame]})
+
+    def pop(self) -> Tuple['ContextFrameStack', ExecutionContext]:
+        """Pop a frame from the stack."""
+        return self.model_copy(
+            update={'frames': self.frames[:-1]}
+        ), self.frames[-1]
+
+    @property
+    def __state__(self) -> TypedState:
+        """Get the state from the top frame."""
+        return self.frames[-1].__state__
+
+    @property
+    def interpreter(self) -> InterpretersDispatch:
+        """Get the interpreter from the top frame."""
+        return self.frames[-1].interpreter
+
+    @property
+    def subcontexts(self) -> Dict[str, Subcontext]:
+        """Get the subcontexts from the top frame."""
+        return self.frames[-1].subcontexts
+
+    @property
+    def state(self) -> TypedState:
+        """Get the state from the top frame."""
+        return self.frames[-1].state
+
+    def __getattr__(self, name: str) -> Any:
+        """Get an attribute from the top frame."""
+        if hasattr(self.frames[-1], name):
+            return getattr(self.frames[-1], name)
+        return getattr(self, name)
+
+    def update_state(self, **update) -> 'ContextFrameStack':
+        """Update the state of the top frame."""
+        return self.model_copy(
+            update={
+                'frames': [
+                    *self.frames[:-1],
+                    self.frames[-1].update_state(**update),
+                ],
+            },
+        )
+
+    def with_state(
+        self,
+        state: Any = None,
+        **update,
+    ) -> 'ContextFrameStack':
+        """Create a new context frame stack with an updated state."""
+        return self.model_copy(
+            update={
+                'frames': [
+                    *self.frames[:-1],
+                    self.frames[-1].with_state(state, **update),
+                ],
+            },
+        )
+
+    def with_result(
+        self,
+        result: Any = None,
+    ) -> 'ContextFrameStack':
+        """Create a new context frame stack with an updated result."""
+        return self.model_copy(
+            update={
+                'frames': [
+                    *self.frames[:-1],
+                    self.frames[-1].with_result(result),
+                ],
+            },
+        )
+
+    def pop_result(self, *pparams) -> Tuple['ContextFrameStack', Any]:
+        """Pop a result from the stack."""
+        result, last_context = self.frames[-1].pop_result(*pparams)
+        return self.model_copy(
+            update={'frames': self.frames[:-1] + [last_context]},
+        ), result
+
+    def get_state(self) -> Optional[Any]:
+        """Get the state from the top frame."""
+        return self.frames[-1].get_state()
+
+    def get_result(self) -> Optional[Any]:
+        """Get the result from the top frame."""
+        return self.frames[-1].get_result()
+
+    def with_subcontext(
+        self,
+        name: str,
+        subcontext: Subcontext,
+    ) -> 'ContextFrameStack':
+        """Add or update a subcontext on the top frame."""
+        return self.model_copy(
+            update={
+                'frames': [
+                    *self.frames[:-1],
+                    self.frames[-1].with_subcontext(name, subcontext),
+                ],
+            }
+        )
+
+    def get_subcontext(self, name: str) -> Optional[Subcontext]:
+        """Get a subcontext by name."""
+        return self.frames[-1].get_subcontext(name)
 
 
 @dataclasses.dataclass(frozen=True)
