@@ -7,6 +7,7 @@ Tests for Wilkinson formula parser against formulaic ground truth.
 import pytest
 import pandas as pd
 import formulaic
+from formulaic.parser.parser import DefaultFormulaParser
 from gramform.grammars.wilkinson.transform import get_processor
 
 
@@ -37,7 +38,12 @@ def _test_formula_equivalence(wilkinson_expr: str, formulaic_expr: str = None, c
 
     # Formulaic's parser (ground truth)
     try:
-        formulaic_result = formulaic.Formula(formulaic_expr)
+        formulaic_result = formulaic.Formula(
+            formulaic_expr,
+            _parser=DefaultFormulaParser(
+                feature_flags=DefaultFormulaParser.FeatureFlags.ALL
+            )
+        )
     except Exception as e:
         pytest.fail(f"Formulaic failed to parse '{formulaic_expr}': {e}")
 
@@ -127,6 +133,11 @@ STRUCTURED_FORMULAE = [
         "y ~ dog + cat + (rat*dog + cat:dog)^2 | v + bs(x) + bs(z) + bs(lag({w*x}))",
         "y ~ dog + cat + (rat*dog + cat:dog)^2 | v + bs(x) + bs(z) + bs(lag(w*x))",
         "structured"
+    ),
+    (
+        "[y ~ v] ~ x + [z ~ w - 1] + [m + n ~ p + [r ~ q] - 1] + [f] | a",
+        "[y ~ v] ~ x + [z ~ w - 1] + [m + n ~ p + [r ~ q] - 1] + [f] | a",
+        "structured",
     ),
 ]
 
