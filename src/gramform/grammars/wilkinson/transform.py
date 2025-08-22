@@ -205,6 +205,7 @@ class WilkinsonState(TypedState):
     operational_level: OperationalLevel = Field(
         default=OperationalLevel.FACTOR
     )
+    dependencies: list[formulaic.Formula] | None = None
 
     def evict(self) -> 'WilkinsonState':
         return self.model_validate(
@@ -247,12 +248,6 @@ class WilkinsonContext(
                 return self.state.terms
             case OperationalLevel.BLOCK:
                 return self.state.block
-                result = self.state.block
-                if isinstance(result, Structured):
-                    # Remove the Structured wrapper
-                    return result._structure
-                else:
-                    return result
             case OperationalLevel.NONE:
                 return self.state.eval
 
@@ -270,7 +265,7 @@ def remove_terms(
     remove = to_terms(remove)
     if ZERO in remove:
         del remove[ZERO]
-        orig[ONE] = None
+        orig[ONE] = None # Interpret removal of ZERO as addition of ONE
     result = {e: None for e in orig if e not in remove}
     return result
 
@@ -311,6 +306,35 @@ def build_simple_formula(
         return result.get('root', result), False
     result = sorted(list(result), key=lambda t: len(t.factors))
     return formulaic.SimpleFormula(result), True
+
+
+def _add_dependencies(
+    context: WilkinsonContext,
+    result: Any,
+) -> WilkinsonContext:
+    if context.state.dependencies is not None:
+        result = Structured(
+            result,
+            deps=context.state.dependencies,
+        )
+        context = context.update_state(dependencies=None)
+    return context, result
+
+
+def _referent_terms(
+    dependencies: Structured,
+    suffix: str
+) -> Dict[Term, None]:
+    return {
+        Term(
+            Factor(
+                f"{f}{suffix}",
+                eval_method=Factor.EvalMethod.LOOKUP,
+            )
+            for f in e.factors
+        ): None
+        for e in dependencies
+    }
 
 
 def VARIABLE_impl(
@@ -367,8 +391,8 @@ def UNARY_NEGATION_impl(
 ) -> WilkinsonContext:
     """Handle unary negation nodes by creating a Factor for lookup."""
     child = node.get_parameters()
-    result = child(context).get_result()
-    result = to_terms(result)
+    context = child(context)
+    result = to_terms(context.get_result())
     return context.set_operational_level(
         OperationalLevel.TERMS
     ).with_result(result)
@@ -382,13 +406,14 @@ def APPEND_impl(
     all_terms = {}
 
     for child in node.get_parameters():
+        context = child(context)
         if child.name == UNARY_NEGATION.name:
             all_terms = remove_terms(
                 all_terms,
-                child(context).get_result(),
+                context.get_result(),
             )
             continue
-        result = child(context).get_result()
+        result = context.get_result()
         update = to_terms(result)
         all_terms.update(update)
         if ZERO in update:
@@ -407,8 +432,10 @@ def REMOVE_impl(
 ) -> WilkinsonContext:
     """Handle removal of terms."""
     expr, remove = node.get_parameters()
-    orig = expr(context).get_result()
-    remove = remove(context).get_result()
+    context = expr(context)
+    orig = context.get_result()
+    context = remove(context)
+    remove = context.get_result()
     result = remove_terms(orig, remove)
     return context.set_operational_level(
         OperationalLevel.TERMS
@@ -423,12 +450,12 @@ def INTERACTION_impl(
 
     children = node.get_parameters()
     first, remaining = children[0], children[1:]
-    result = first(context).get_result()
-    factor_seqs = build_factor_seqs(result)
+    context = first(context)
+    factor_seqs = build_factor_seqs(context.get_result())
 
     for next in remaining:
-        result = next(context).get_result()
-        new_seqs = build_factor_seqs(result)
+        context = next(context)
+        new_seqs = build_factor_seqs(context.get_result())
         factor_seqs = {
             a + b: None
             for a in factor_seqs
@@ -448,8 +475,10 @@ def NESTED_impl(
     """Handle nested effects (hierarchical structure)."""
     left, right = node.get_parameters()
 
-    left_result = left(context).get_result()
-    right_result = right(context).get_result()
+    context = left(context)
+    left_result = context.get_result()
+    context = right(context)
+    right_result = context.get_result()
 
     left_factors = build_factor_seqs(left_result)
     right_factors = build_factor_seqs(right_result)
@@ -523,8 +552,8 @@ def NAMED_FUNCTION_impl(
     """Handle named function calls."""
     name, expr, *args, level = node.get_parameters()
     argstr = args[0](context).get_result() if args else ""
-    result = expr(context).get_result()
-    result = to_terms(result)
+    context = expr(context)
+    result = to_terms(context.get_result())
     match level:
         case OperationalLevel.FACTOR:
             result = to_terms({
@@ -564,8 +593,10 @@ def LHS_RHS_STRUCTURE_impl(
     lhs_expr, rhs_expr = node.get_parameters()
     context = lhs_expr(context)
     lhs, _ = build_simple_formula(context.get_result(), context)
+    context, lhs = _add_dependencies(context, lhs)
     context = rhs_expr(context)
     rhs, _ = build_simple_formula(context.get_result(), context)
+    context, rhs = _add_dependencies(context, rhs)
     result = Structured(
         lhs=lhs,
         rhs=rhs,
@@ -583,8 +614,10 @@ def RESIDUAL_STRUCTURE_impl(
     residualise_expr, wrt_expr = node.get_parameters()
     context = residualise_expr(context)
     residualise, _ = build_simple_formula(context.get_result(), context)
+    context, residualise = _add_dependencies(context, residualise)
     context = wrt_expr(context)
     wrt, _ = build_simple_formula(context.get_result(), context)
+    context, wrt = _add_dependencies(context, wrt)
     result = Structured(
         residualise=residualise,
         wrt=wrt,
@@ -605,11 +638,50 @@ def SUBPARTS_STRUCTURE_impl(
         result = context.get_result()
         result = to_terms(result)
         result, _ = build_simple_formula(result, context)
+        context, result = _add_dependencies(context, result)
         subparts.append(result)
     result = Structured(tuple(subparts))
     return context.set_operational_level(
         OperationalLevel.BLOCK
     ).with_result(result)
+
+
+def PUSH_FRAME_impl(
+    node: Primitive,
+    context: WilkinsonContext,
+) -> WilkinsonContext:
+    """Push a frame onto the stack."""
+    inner = node.get_parameters()
+    subcontext = context.push()
+    subcontext = inner(subcontext)
+    dependencies = subcontext.get_result()
+    if not isinstance(dependencies, Structured):
+        return context.with_result(dependencies)
+    if "lhs" in dependencies:
+        result = _referent_terms(dependencies["lhs"], "_hat")
+    elif "residualise" in dependencies:
+        result = _referent_terms(dependencies["residualise"], "_tilde")
+    else:
+        raise ValueError(f"Unknown dependencies: {dependencies}")
+    if subcontext.state.dependencies is not None:
+        dependencies = Structured(
+            dependencies,
+            deps=subcontext.state.dependencies,
+        )
+    if context.state.dependencies is not None:
+        dependencies = [
+            *context.state.dependencies,
+            dependencies,
+        ]
+    else:
+        dependencies = [dependencies]
+    context = context.set_operational_level(
+        OperationalLevel.TERMS
+    ).update_state(
+        terms=to_terms(result),
+        dependencies=tuple(dependencies),
+    )
+    return context
 
 
 def init_hook(
@@ -639,6 +711,7 @@ def finalise_hook(
 ) -> WilkinsonContext:
     result = context.get_result()
     result, is_simple_formula = build_simple_formula(result, context)
+    context, result = _add_dependencies(context, result)
     if is_simple_formula:
         return context.set_operational_level(
             OperationalLevel.BLOCK
@@ -660,14 +733,19 @@ def _add_intercept(expr: str, sep_queue: list[str]) -> str:
     else:
         (sep, rhs_only), sep_queue = sep_queue[0], sep_queue[1:]
         parts = expr.split(sep)
+        if len(parts) == 1:
+            return _add_intercept(parts[0], sep_queue)
         if rhs_only and len(parts) > 1:
-            return sep.join([
-                parts[0],
-                *[_add_intercept(part, sep_queue) for part in parts[1:]],
+            return f" {sep} ".join([
+                parts[0].strip(),
+                *[_add_intercept(
+                    part.strip(),
+                    sep_queue,
+                ) for part in parts[1:]],
             ])
         else:
-            return sep.join([
-                _add_intercept(e, sep_queue)
+            return f" {sep} ".join([
+                _add_intercept(e.strip(), sep_queue)
                 for e in parts
             ])
 
@@ -702,6 +780,7 @@ INTERPRETERS.register_operation('__all__', 'FUNCTION_PARAMETERS', FUNCTION_PARAM
 INTERPRETERS.register_operation('__all__', 'LHS_RHS_STRUCTURE', LHS_RHS_STRUCTURE_impl)
 INTERPRETERS.register_operation('__all__', 'RESIDUAL_STRUCTURE', RESIDUAL_STRUCTURE_impl)
 INTERPRETERS.register_operation('__all__', 'SUBPARTS_STRUCTURE', SUBPARTS_STRUCTURE_impl)
+INTERPRETERS.register_operation('__all__', 'PUSH_FRAME', PUSH_FRAME_impl)
 
 
 def get_processor():

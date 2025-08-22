@@ -187,6 +187,18 @@ def enter_group():
     return _inner
 
 
+def circumfix(prim: "Primitive", *pparams):
+    """
+    A production rule pattern used for circumfix operations.
+
+    Pattern:
+    construct : LPAREN construct RPAREN
+    """
+    def _inner(_, inner, __):
+        return prim.bind(inner, *pparams)
+    return _inner
+
+
 def unit_lift():
     """
     A production rule pattern used for lifting one kind of construct into

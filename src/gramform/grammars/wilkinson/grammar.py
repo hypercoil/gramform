@@ -12,6 +12,7 @@ from typing import Tuple
 
 from gramform.core import (
     binop_infix,
+    circumfix,
     enter_group,
     config_primitives,
     literal,
@@ -59,12 +60,14 @@ FUNCTION_PARAMETERS = Primitive("FUNCTION_PARAMETERS", is_associative=True)
 LHS_RHS_STRUCTURE = Primitive("LHS_RHS_STRUCTURE", is_associative=False)
 SUBPARTS_STRUCTURE = Primitive("SUBPARTS_STRUCTURE", is_associative=False)
 RESIDUAL_STRUCTURE = Primitive("RESIDUAL_STRUCTURE", is_associative=False)
+PUSH_FRAME = Primitive("PUSH_FRAME", is_associative=False)
 
 
 TOKEN_PRECEDENCE = (
     # ↑ lowest precedence
     ('LHS_RHS_SEPARATOR', 'LHS_RESIDUAL_RHS'),
     'PARTS_SEPARATOR',
+    ('LBRACKET', 'RBRACKET'),
     'DOT',
     'PARAM_SEPARATOR',
     ('APPEND', 'REMOVE'),
@@ -513,6 +516,18 @@ class StructureComponent(GrammarComponent):
             precedence=from_sequence,
             category='STRUCTURE',
         ),
+        Token(
+            'LBRACKET',
+            r'\[',
+            precedence=from_sequence,
+            category='STRUCTURE',
+        ),
+        Token(
+            'RBRACKET',
+            r'\]',
+            precedence=from_sequence,
+            category='STRUCTURE',
+        ),
     )
 
     production_rules: Tuple[ProductionRule, ...] = (
@@ -545,6 +560,11 @@ class StructureComponent(GrammarComponent):
             'block_expression',
             'block : expression',
             unit_lift(),
+        ),
+        ProductionRule(
+            'factor_formula_push_frame',
+            'factor : LBRACKET formula RBRACKET',
+            circumfix(PUSH_FRAME),
         ),
     )
 
