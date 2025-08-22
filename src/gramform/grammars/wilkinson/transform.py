@@ -21,12 +21,12 @@ from formulaic.utils.structured import Structured
 from pydantic import Field
 
 from gramform.core import (
-    CacheSubcontextMixin,
     ExecutionContext,
     InterpretersDispatch,
     Primitive,
     TypedState,
     TransformProcessor,
+    withCacheSubcontext,
 )
 from gramform.grammars.wilkinson.grammar import (
     OperationalLevel,
@@ -214,7 +214,7 @@ class WilkinsonState(TypedState):
 
 class WilkinsonContext(
     ExecutionContext,
-    CacheSubcontextMixin,
+    withCacheSubcontext,
 ):
     __state__: Type[WilkinsonState] = WilkinsonState
 

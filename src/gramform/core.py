@@ -1143,7 +1143,7 @@ class CacheSubcontext(Subcontext):
         return self.model_copy(update={'cache': new_cache})
 
 
-class CacheSubcontextMixin:
+class withCacheSubcontext:
     """Mixin for cache subcontext."""
     def __add_subcontext__(self):
         """Add cache subcontext to parent."""

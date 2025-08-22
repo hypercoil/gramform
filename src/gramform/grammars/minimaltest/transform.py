@@ -18,13 +18,13 @@ from narwhals.typing import IntoFrameT
 from pydantic import field_validator
 
 from gramform.core import (
-    CacheSubcontextMixin,
     ExecutionContext,
     InterpretersDispatch,
     Primitive,
     TransformProcessor,
     Tuple,
     TypedState,
+    withCacheSubcontext,
 )
 from gramform.grammars.minimaltest.grammar import (
     MinimalGrammar,
@@ -55,7 +55,7 @@ class DataFrameState(TypedState):
 
 class DataFrameContext(
     ExecutionContext,
-    CacheSubcontextMixin,
+    withCacheSubcontext,
 ):
     __state__: Type[DataFrameState] = DataFrameState
 
