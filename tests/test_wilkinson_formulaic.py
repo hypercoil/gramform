@@ -139,6 +139,11 @@ STRUCTURED_FORMULAE = [
         "[y ~ v] ~ x + [z ~ w - 1] + [m + n ~ p + [r ~ q] - 1] + [f] | a",
         "structured",
     ),
+    (
+        "x + [z ~ w - 1] + [m + n ~ p + [r ~ q] - 1] + [f] | a",
+        "x + [z ~ w - 1] + [m + n ~ p + [r ~ q] - 1] + [f] | a",
+        "structured",
+    ),
 ]
 
 

@@ -31,7 +31,15 @@ from gramform.core import (
 from gramform.grammars.wilkinson.grammar import (
     OperationalLevel,
     WilkinsonGrammar,
+    NUMERIC_LITERAL,
+    APPEND,
+    REMOVE,
     UNARY_NEGATION,
+    LHS_RHS_STRUCTURE,
+    RESIDUAL_STRUCTURE,
+    SUBPARTS_STRUCTURE,
+    PUSH_FRAME,
+    lift_literal,
 )
 from gramform.postprocessors import (
     ppr_associative_flatten,
@@ -722,72 +730,105 @@ def finalise_hook(
         ).with_result(formulaic.Formula(result))
 
 
-class InterceptExprSeparator(NamedTuple):
-    sep: str
-    rhs_only: bool
+def add_intercept_to_formula(
+    tree: Primitive,
+    context: ExecutionContext,
+) -> Tuple[Primitive, ExecutionContext]:
+    if tree.name in (
+        "LHS_RHS_STRUCTURE",
+        "RESIDUAL_STRUCTURE",
+    ):
+        op = (
+            LHS_RHS_STRUCTURE
+            if tree.name == "LHS_RHS_STRUCTURE"
+            else RESIDUAL_STRUCTURE
+        )
+        left, right = tree.parameters
+        right = add_intercept_to_formula(right, context)[0]
+        return op.bind(
+            left,
+            right,
+        ), context
+    elif tree.name == "SUBPARTS_STRUCTURE":
+        return SUBPARTS_STRUCTURE.bind(
+            *[
+                add_intercept_to_formula(child, context)[0]
+                for child in tree.parameters
+            ],
+        ), context
+    elif tree.name in (
+        "APPEND",
+        "REMOVE",
+    ):
+        op = APPEND if tree.name == "APPEND" else REMOVE
+        left, *others = tree.parameters
+        left = add_intercept_to_formula(left, context)[0]
+        return op.bind(
+            left,
+            *others,
+        ), context
+    return APPEND.bind(
+        lift_literal(int, NUMERIC_LITERAL)(1),
+        tree,
+    ), context
 
 
-def _add_intercept(expr: str, sep_queue: list[str]) -> str:
-    if not sep_queue: # terminal case
-        return f'1 + {expr}'
-    else:
-        (sep, rhs_only), sep_queue = sep_queue[0], sep_queue[1:]
-        parts = expr.split(sep)
-        if len(parts) == 1:
-            return _add_intercept(parts[0], sep_queue)
-        if rhs_only and len(parts) > 1:
-            return f" {sep} ".join([
-                parts[0].strip(),
-                *[_add_intercept(
-                    part.strip(),
-                    sep_queue,
-                ) for part in parts[1:]],
-            ])
-        else:
-            return f" {sep} ".join([
-                _add_intercept(e.strip(), sep_queue)
-                for e in parts
-            ])
+def ppr_add_intercept(
+    tree: Primitive,
+    context: ExecutionContext,
+) -> Tuple[Primitive, ExecutionContext]:
+    def _walk(
+        tree: Primitive,
+        context: ExecutionContext,
+    ) -> Tuple[Primitive, ExecutionContext]:
+        if not isinstance(tree, Primitive) or tree.is_terminal:
+            return tree, context
+        if tree.name =="PUSH_FRAME":
+            return PUSH_FRAME.bind(
+                ppr_add_intercept(
+                    tree.get_parameters(),
+                    context,
+                )[0],
+            ), context
+        return tree.bind(
+            *[
+                _walk(child, context)[0]
+                for child in tree.parameters
+            ],
+        ), context
 
-
-def add_intercept_preprocessor(expr: str) -> str:
-    return _add_intercept(
-        expr,
-        (
-            InterceptExprSeparator(r'~|', True),
-            InterceptExprSeparator(r'~', True),
-            InterceptExprSeparator(r'|', False),
-        ),
-    )
+    tree, context = add_intercept_to_formula(tree, context)
+    return _walk(tree, context)
 
 
 # Register interpreters
 INTERPRETERS.register_interpreter('formulaic')
-INTERPRETERS.register_operation('__all__', 'VARIABLE', VARIABLE_impl)
-INTERPRETERS.register_operation('__all__', 'NUMERIC_LITERAL', NUMERIC_LITERAL_impl)
-INTERPRETERS.register_operation('__all__', 'EXECUTE', EXECUTE_impl)
-INTERPRETERS.register_operation('__all__', 'VARIABLE_COMPLEMENT', VARIABLE_COMPLEMENT_impl)
-INTERPRETERS.register_operation('__all__', 'UNARY_NEGATION', UNARY_NEGATION_impl)
-INTERPRETERS.register_operation('__all__', 'APPEND', APPEND_impl)
-INTERPRETERS.register_operation('__all__', 'REMOVE', REMOVE_impl)
-INTERPRETERS.register_operation('__all__', 'INTERACTION', INTERACTION_impl)
-INTERPRETERS.register_operation('__all__', 'NESTED', NESTED_impl)
-INTERPRETERS.register_operation('__all__', 'POWER', POWER_impl)
-INTERPRETERS.register_operation('__all__', 'NAMED_FUNCTION', NAMED_FUNCTION_impl)
-INTERPRETERS.register_operation('__all__', 'PARAMETER', PARAMETER_impl)
-INTERPRETERS.register_operation('__all__', 'NAMED_PARAMETER', NAMED_PARAMETER_impl)
-INTERPRETERS.register_operation('__all__', 'FUNCTION_PARAMETERS', FUNCTION_PARAMETERS_impl)
-INTERPRETERS.register_operation('__all__', 'LHS_RHS_STRUCTURE', LHS_RHS_STRUCTURE_impl)
-INTERPRETERS.register_operation('__all__', 'RESIDUAL_STRUCTURE', RESIDUAL_STRUCTURE_impl)
-INTERPRETERS.register_operation('__all__', 'SUBPARTS_STRUCTURE', SUBPARTS_STRUCTURE_impl)
-INTERPRETERS.register_operation('__all__', 'PUSH_FRAME', PUSH_FRAME_impl)
-
+INTERPRETERS.register_group('build', ['formulaic'])
+INTERPRETERS.register_operation('build', 'VARIABLE', VARIABLE_impl)
+INTERPRETERS.register_operation('build', 'NUMERIC_LITERAL', NUMERIC_LITERAL_impl)
+INTERPRETERS.register_operation('build', 'EXECUTE', EXECUTE_impl)
+INTERPRETERS.register_operation('build', 'VARIABLE_COMPLEMENT', VARIABLE_COMPLEMENT_impl)
+INTERPRETERS.register_operation('build', 'UNARY_NEGATION', UNARY_NEGATION_impl)
+INTERPRETERS.register_operation('build', 'APPEND', APPEND_impl)
+INTERPRETERS.register_operation('build', 'REMOVE', REMOVE_impl)
+INTERPRETERS.register_operation('build', 'INTERACTION', INTERACTION_impl)
+INTERPRETERS.register_operation('build', 'NESTED', NESTED_impl)
+INTERPRETERS.register_operation('build', 'POWER', POWER_impl)
+INTERPRETERS.register_operation('build', 'NAMED_FUNCTION', NAMED_FUNCTION_impl)
+INTERPRETERS.register_operation('build', 'PARAMETER', PARAMETER_impl)
+INTERPRETERS.register_operation('build', 'NAMED_PARAMETER', NAMED_PARAMETER_impl)
+INTERPRETERS.register_operation('build', 'FUNCTION_PARAMETERS', FUNCTION_PARAMETERS_impl)
+INTERPRETERS.register_operation('build', 'LHS_RHS_STRUCTURE', LHS_RHS_STRUCTURE_impl)
+INTERPRETERS.register_operation('build', 'RESIDUAL_STRUCTURE', RESIDUAL_STRUCTURE_impl)
+INTERPRETERS.register_operation('build', 'SUBPARTS_STRUCTURE', SUBPARTS_STRUCTURE_impl)
+INTERPRETERS.register_operation('build', 'PUSH_FRAME', PUSH_FRAME_impl)
 
 def get_processor():
     processor = TransformProcessor(
         grammar=WilkinsonGrammar(),
-        preprocessors=(add_intercept_preprocessor,),
+        preprocessors=(),
         postprocessors=(
+            ppr_add_intercept,
             ppr_associative_flatten,
             ppr_common_subexpression,
         ),
