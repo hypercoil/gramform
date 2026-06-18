@@ -250,7 +250,7 @@ def _parse_correlation(
     value: str,
     diagnostics: list[Diagnostic],
 ) -> CorrelationSpec | None:
-    """``correlation=ar1(time | g)`` -> a within-group correlation structure."""
+    """``correlation=ar1(time | g)`` -> a within-group correlation."""
     m = _CALL_RE.match(value)
     if not m or m.group(2) is None:
         diagnostics.append(

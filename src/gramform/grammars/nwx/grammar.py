@@ -43,6 +43,7 @@ from gramform.core import (
     ProductionRule,
     Token,
     enter_group,
+    unit_lift,
 )
 from gramform.core import (
     Primitive as CorePrimitive,
@@ -60,6 +61,15 @@ from gramform.grammars.wilkinson.grammar import (
 # ``Primitive`` directly; the interpreter dispatches purely by ``.name``).
 RANDOM_EFFECT = CorePrimitive('RANDOM_EFFECT', is_associative=False)
 GROUPING = CorePrimitive('GROUPING', is_associative=False)
+PROGRAM_DIRECTIVES = CorePrimitive('PROGRAM_DIRECTIVES', is_associative=False)
+FRAME_DIRECTIVES = CorePrimitive('FRAME_DIRECTIVES', is_associative=False)
+
+
+def _directive_token(t, grammar):
+    """A no-op lexer action: makes ``DIRECTIVE_BLOCK`` a *function* token so it
+    out-ranks the string-defined ``EXECUTE`` (``{...}``), giving ``{{`` maximal
+    munch over a single ``{``."""
+    return t
 
 
 def _ranef_bind(correlated: bool):
@@ -112,17 +122,63 @@ class RanefComponent(GrammarComponent):
     )
 
 
+@dataclass(frozen=True)
+class DirectiveComponent(GrammarComponent):
+    """Component for the trailing ``{{ ... }}`` directive block (spec §4.5).
+
+    The block is captured as one ``DIRECTIVE_BLOCK`` token (its inner text is
+    parsed by :mod:`gramform.grammars.nwx.directives`), so the directive
+    mini-language's ``:`` / ``=`` never reach the term-algebra lexer -- no
+    collision, no separate lexer state needed. Its grammatical *position*
+    carries the scope: a block after the whole formula binds to the implicit
+    outermost node (``PROGRAM_DIRECTIVES``); a block inside a frame's brackets
+    binds to that frame's node (``FRAME_DIRECTIVES``). The multi-level
+    pipeline (graph-level placement) is added in a later component.
+    """
+
+    tokens: Tuple[Token, ...] = (
+        Token(
+            'DIRECTIVE_BLOCK',
+            r'\{\{.*?\}\}',
+            function=_directive_token,
+            precedence=from_sequence,
+            category='DIRECTIVE',
+        ),
+    )
+
+    production_rules: Tuple[ProductionRule, ...] = (
+        ProductionRule(
+            'program_plain',
+            'program : formula',
+            unit_lift(),
+        ),
+        ProductionRule(
+            'program_directives',
+            'program : formula DIRECTIVE_BLOCK',
+            lambda formula, block: PROGRAM_DIRECTIVES.bind(formula, block),
+        ),
+        ProductionRule(
+            'frame_directives',
+            'factor : LBRACKET formula DIRECTIVE_BLOCK RBRACKET',
+            lambda _, formula, block, __: FRAME_DIRECTIVES.bind(
+                formula, block
+            ),
+        ),
+    )
+
+
 class NwxGrammar(DynamicGrammar):
     """The ``nwx`` grammar: the Wilkinson components + ``nwx`` extensions.
 
-    Phase 3 adds :class:`RanefComponent`. Later phases add the directive-block
-    (exclusive ``spec`` state) and multi-level pipeline components; each merge
-    is guarded by the parser-conflict gate.
+    Phase 3 adds :class:`RanefComponent`; Phase 5 adds
+    :class:`DirectiveComponent` (and, later, the multi-level pipeline). The
+    start symbol is ``program`` = a ``formula`` plus an optional trailing
+    directive block. Each merge is guarded by the parser-conflict gate.
     """
 
     def __init__(self):
         super().__init__(
-            start_symbol='formula',
+            start_symbol='program',
             components=(
                 LiteralTerminalsComponent(),
                 BasicOperatorsComponent(),
@@ -130,5 +186,6 @@ class NwxGrammar(DynamicGrammar):
                 ExecutionComponent(),
                 StructureComponent(),
                 RanefComponent(),
+                DirectiveComponent(),
             ),
         )

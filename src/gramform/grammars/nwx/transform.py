@@ -13,10 +13,14 @@ the PoC's ``formulaic`` one; this module imports neither ``jax`` nor
 The term algebra (``+ - * : / ^`` and grouping), the ``~`` / ``~|`` structure,
 and bracketed frames ``[ ... ]`` reuse the Wilkinson grammar verbatim; only the
 *interpretation* differs. The PoC's ``to_terms`` dedup / structural-singularity
-guard and the single ``ppr_add_intercept`` postprocessor are ported onto
-``TermSpec``. A trailing ``{{ ... }}`` directive block (the minimal Phase-1 key
-set) is split off textually and parsed by :mod:`directives`; the integrated
-exclusive-state lexer lands in Phase 4.
+guard is ported onto ``TermSpec``, and an nwx-aware intercept postprocessor
+(:func:`nwx_add_intercept`) descends past the directive wrappers. A trailing
+``{{ ... }}`` directive block is captured by the grammar as a single
+``DIRECTIVE_BLOCK`` token (its text parsed by :mod:`directives`) and attaches by
+*position*: ``PROGRAM_DIRECTIVES`` (outermost node) or ``FRAME_DIRECTIVES``
+(inside a frame). No separate lexer state is needed -- the block is opaque to
+the term lexer, so the directive ``:`` / ``=`` never collide with the term
+algebra's.
 
 Results flow through a single typed slot (``NwxState.eval``) as a
 ``FactorSpec | TermSpec | tuple[TermSpec, ...] | _Block`` union -- no
@@ -27,7 +31,6 @@ Results flow through a single typed slot (``NwxState.eval``) as a
 
 import ast as _ast
 import dataclasses
-import re
 import warnings
 from dataclasses import dataclass
 from typing import Callable, Iterable, Type
@@ -61,7 +64,7 @@ from gramform.grammars.nwx.spec import (
     TermSource,
     TermSpec,
 )
-from gramform.grammars.wilkinson.transform import ppr_add_intercept
+from gramform.grammars.wilkinson.transform import add_intercept_to_formula
 from gramform.postprocessors import (
     ppr_associative_flatten,
     ppr_common_subexpression,
@@ -481,8 +484,15 @@ def SUBPARTS_STRUCTURE_impl(
     )
 
 
-def PUSH_FRAME_impl(node: Primitive, context: NwxContext) -> NwxContext:
-    inner = node.get_parameters()
+def _push_frame(
+    inner: Primitive,
+    context: NwxContext,
+    directives: DirectiveSet | None = None,
+) -> NwxContext:
+    """Evaluate a bracketed sub-model into a graph sub-node and inject its
+    fitted (``_hat``) / residualised (``_tilde``) referent into the parent
+    design. ``directives`` (a frame-level ``{{ ... }}``) configure the
+    sub-node's spec + level/group_by/combine."""
     context = inner(context)
     block = context.get_result()
     if not isinstance(block, _Block):
@@ -491,12 +501,20 @@ def PUSH_FRAME_impl(node: Primitive, context: NwxContext) -> NwxContext:
     deps = context.state.deps
     stage = f'frame{len(deps)}'
     kind = '_tilde' if block.residualise else '_hat'
+    spec = _block_to_modelspec(block)
+    level, group_by, combine = Level.DATASET, (), Combine.FIXED
+    if directives is not None:
+        spec = _apply_directives(spec, directives)
+        _validate_residualise(spec.residualise)
+        level = directives.level or level
+        group_by = directives.group_by
+        combine = directives.combine or combine
     subnode = ModelNode(
         name=stage,
-        level=Level.DATASET,
-        group_by=(),
-        combine=Combine.FIXED,
-        spec=_block_to_modelspec(block),
+        level=level,
+        group_by=group_by,
+        combine=combine,
+        spec=spec,
     )
     referents = tuple(
         TermSpec((FactorSpec(Referent(stage=stage, kind=kind)),))
@@ -504,6 +522,34 @@ def PUSH_FRAME_impl(node: Primitive, context: NwxContext) -> NwxContext:
     )
     context = context.update_state(deps=deps + (subnode,))
     return context.with_result(to_terms(referents))
+
+
+def PUSH_FRAME_impl(node: Primitive, context: NwxContext) -> NwxContext:
+    return _push_frame(node.get_parameters(), context)
+
+
+def FRAME_DIRECTIVES_impl(node: Primitive, context: NwxContext) -> NwxContext:
+    inner, block = node.parameters
+    return _push_frame(inner, context, parse_directives(_block_text(block)))
+
+
+def PROGRAM_DIRECTIVES_impl(
+    node: Primitive,
+    context: NwxContext,
+) -> NwxContext:
+    # A trailing `{{ ... }}` on the whole formula binds to the implicit
+    # outermost node: stash its directives for the finaliser, then evaluate the
+    # formula body.
+    formula, block = node.parameters
+    context = context.update_state(
+        directives=parse_directives(_block_text(block))
+    )
+    return formula(context)
+
+
+def _block_text(token: str) -> str:
+    """Strip the ``{{`` / ``}}`` delimiters off a ``DIRECTIVE_BLOCK`` token."""
+    return token[2:-2]
 
 
 # ---------------------------------------------------------------------------
@@ -583,14 +629,6 @@ def _validate_residualise(specs: tuple[ResidualiseSpec, ...]) -> None:
             )
 
 
-def init_hook(
-    ast: Primitive,
-    context: NwxContext,
-    directives: DirectiveSet | None = None,
-) -> tuple[Primitive, NwxContext]:
-    return ast, context.update_state(directives=directives)
-
-
 def finalise_hook(context: NwxContext) -> NwxContext:
     result = context.get_result()
     directives = context.state.directives
@@ -654,6 +692,12 @@ INTERPRETERS.register_operation(
     'build', 'SUBPARTS_STRUCTURE', SUBPARTS_STRUCTURE_impl
 )
 INTERPRETERS.register_operation('build', 'PUSH_FRAME', PUSH_FRAME_impl)
+INTERPRETERS.register_operation(
+    'build', 'FRAME_DIRECTIVES', FRAME_DIRECTIVES_impl
+)
+INTERPRETERS.register_operation(
+    'build', 'PROGRAM_DIRECTIVES', PROGRAM_DIRECTIVES_impl
+)
 
 # Register the disjoint feature-family interpreters into the shared ``spec``
 # group (spec §12). Imported here, after the dispatch + helpers above are
@@ -662,20 +706,49 @@ INTERPRETERS.register_operation('build', 'PUSH_FRAME', PUSH_FRAME_impl)
 import gramform.grammars.nwx.transform_ranef  # noqa: E402, F401
 import gramform.grammars.nwx.transform_smooth  # noqa: E402, F401
 
-_DIRECTIVE_RE = re.compile(r'\{\{(.*?)\}\}\s*$', re.DOTALL)
+# ---------------------------------------------------------------------------
+# intercept postprocessor (nwx-aware)
+# ---------------------------------------------------------------------------
 
 
-def _split_directives(formula: str) -> tuple[str, DirectiveSet | None]:
-    """Split a trailing ``{{ ... }}`` directive block off the formula body.
+def _walk_intercept(tree: object, context: NwxContext) -> object:
+    """Recurse, re-adding the implicit intercept to every nested formula (a
+    ``PUSH_FRAME`` / ``FRAME_DIRECTIVES`` sub-model), preserving the opaque
+    ``DIRECTIVE_BLOCK`` string operands."""
+    if not isinstance(tree, Primitive) or tree.is_terminal:
+        return tree
+    if tree.name == 'PUSH_FRAME':
+        return tree.bind(_top_formula(tree.get_parameters(), context))
+    if tree.name == 'FRAME_DIRECTIVES':
+        formula, block = tree.parameters
+        return tree.bind(_top_formula(formula, context), block)
+    return tree.bind(
+        *[_walk_intercept(child, context) for child in tree.parameters]
+    )
 
-    Phase 1 supports a single trailing (node- or graph-level) block; full
-    bracket-scoped directive placement lands in Phase 4/5. Single-brace
-    ``{python}`` execute forms in the body are untouched.
-    """
-    match = _DIRECTIVE_RE.search(formula)
-    if match is None:
-        return formula, None
-    return formula[: match.start()], parse_directives(match.group(1))
+
+def _top_formula(tree: object, context: NwxContext) -> object:
+    """Add the intercept to a formula's RHS, then recurse into its factors."""
+    if isinstance(tree, Primitive):
+        tree = add_intercept_to_formula(tree, context)[0]
+    return _walk_intercept(tree, context)
+
+
+def nwx_add_intercept(
+    tree: Primitive,
+    context: NwxContext,
+) -> tuple[Primitive, NwxContext]:
+    """The nwx counterpart of Wilkinson's ``ppr_add_intercept`` postprocessor.
+
+    The directive wrappers (``PROGRAM_DIRECTIVES`` / ``FRAME_DIRECTIVES``)
+    carry an opaque ``{{ ... }}`` string operand that must NOT be wrapped in an
+    intercept; this descends past them to the inner formula(e)."""
+    if tree.name == 'PROGRAM_DIRECTIVES':
+        formula, block = tree.parameters
+        return tree.bind(_top_formula(formula, context), block), context
+    result = _top_formula(tree, context)
+    assert isinstance(result, Primitive)
+    return result, context
 
 
 class NwxProcessor:
@@ -686,7 +759,7 @@ class NwxProcessor:
             grammar=NwxGrammar(),
             preprocessors=(),
             postprocessors=(
-                ppr_add_intercept,
+                nwx_add_intercept,
                 ppr_associative_flatten,
                 ppr_common_subexpression,
             ),
@@ -694,12 +767,10 @@ class NwxProcessor:
             context_class=NwxContext,
             default_interpreter='spec',
         )
-        self._inner.register_initialisation('spec', init_hook)
         self._inner.register_finalisation('spec', finalise_hook)
 
     def __call__(self, formula: str) -> ModelGraph:
-        body, directives = _split_directives(formula)
-        return self._inner.transform(body, directives=directives)
+        return self._inner.transform(formula)
 
 
 def get_processor() -> NwxProcessor:
