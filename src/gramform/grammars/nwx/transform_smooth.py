@@ -7,8 +7,8 @@
 Lowers the GAM/GAMM smooth constructors ``s`` / ``te`` / ``ti`` / ``t2`` (spec
 §4.3) onto :class:`~gramform.grammars.nwx.spec.SmoothSpec`. These names are
 special **only in call position** (a bare ``s`` stays a column lookup, R6); the
-calls reuse the existing parameterised ``NAME(...)`` productions, so this module
-adds no grammar -- it registers a handler into the shared
+calls reuse the existing parameterised ``NAME(...)`` productions, so this
+module adds no grammar -- it registers a handler into the shared
 ``NAMED_FUNCTION_HANDLERS`` table. Like ``noise()`` / random effects, a smooth
 is routed structurally out of the fixed-term stream into ``NwxState.smooth``
 (returning no fixed term), which ``LHS_RHS_STRUCTURE`` consumes into
@@ -16,7 +16,7 @@ is routed structurally out of the fixed-term stream into ``NwxState.smooth``
 
 ::
 
-    s(age, k=6, bs="cr", by=dx)   1-D penalised smooth; by -> factor/varying-coef
+    s(age, k=6, bs="cr", by=dx)   1-D penalised smooth; by -> factor/varycoef
     te(x, z, k=5)                 anisotropic tensor product (tensor=True)
     ti(x, z)                      pure interaction tensor
     s(g, bs="re")                 random intercept AS a smooth (GAMM bridge)
