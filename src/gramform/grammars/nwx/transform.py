@@ -96,6 +96,7 @@ class _Block:
     partial: tuple[TermSpec, ...] = ()
     random: tuple[RandomEffectSpec, ...] = ()
     smooth: tuple[SmoothSpec, ...] = ()
+    signal: tuple[TermSpec, ...] = ()  # signal() set on a `~|` RHS
 
 
 class NwxState(TypedState):
@@ -103,13 +104,18 @@ class NwxState(TypedState):
     collects frame sub-models (emitted as extra graph nodes); ``partial``
     accumulates ``noise()`` in-model nuisance terms for the enclosing block;
     ``random`` accumulates ``(...|g)`` random-effect specs and ``smooth`` the
-    ``s()``/``te()``/... smooth specs for the enclosing block; ``directives``
-    holds the parsed ``{{ ... }}`` block for the finaliser."""
+    ``s()``/``te()``/... smooth specs for the enclosing block. On a ``~|``
+    residualisation RHS, ``in_residualise`` is set so ``signal()``/``noise()``
+    route into ``signal`` / ``residualise_noise`` instead of ``partial``;
+    ``directives`` holds the parsed ``{{ ... }}`` block for the finaliser."""
 
     deps: tuple[ModelNode, ...] = ()
     partial: tuple[TermSpec, ...] = ()
     random: tuple[RandomEffectSpec, ...] = ()
     smooth: tuple[SmoothSpec, ...] = ()
+    signal: tuple[TermSpec, ...] = ()
+    residualise_noise: tuple[TermSpec, ...] = ()
+    in_residualise: bool = False
     directives: DirectiveSet | None = None
 
 
@@ -358,9 +364,11 @@ def NESTED_impl(node: Primitive, context: NwxContext) -> NwxContext:
     return context.with_result(to_terms(terms))
 
 
-#: In-model nuisance markers (special only in call position). ``signal()`` and
-#: residualisation-context ``noise()`` routing arrive in Phase 5.
+#: Nuisance markers (special only in call position): on a normal RHS they mark
+#: in-model FWL partials; on a ``~|`` residualisation RHS they mark the noise
+#: set. ``signal()`` marks variance to preserve (residualisation RHS only).
 _PARTIAL_MARKERS = frozenset({'noise', 'nuisance'})
+_SIGNAL_MARKERS = frozenset({'signal'})
 
 #: Extra ``NAME(...)`` call handlers contributed by feature-family modules
 #: (smooths register ``s``/``te``/``ti``/``t2`` here at import). A handler
@@ -374,14 +382,32 @@ NAMED_FUNCTION_HANDLERS: dict[
 def NAMED_FUNCTION_impl(node: Primitive, context: NwxContext) -> NwxContext:
     name = node.parameters[0]
     if name in _PARTIAL_MARKERS:
-        # `noise(...)` on a normal RHS marks in-model nuisance: the wrapped
-        # terms are partialled out of the reported estimands but not reported
-        # (FWL), so they route structurally to `ModelSpec.partial`, not
-        # `fixed`. The call contributes no fixed terms.
+        # `noise(...)` routes structurally and contributes no fixed term. On a
+        # residualisation (`~|`) RHS it joins the noise set; on a normal RHS it
+        # marks an in-model FWL partial (`ModelSpec.partial`).
         expr = node.parameters[1]
         context = expr(context)
         terms = to_terms(_coerce(context.get_result()))
-        context = context.update_state(partial=context.state.partial + terms)
+        if context.state.in_residualise:
+            context = context.update_state(
+                residualise_noise=context.state.residualise_noise + terms
+            )
+        else:
+            context = context.update_state(
+                partial=context.state.partial + terms
+            )
+        return context.with_result(())
+    if name in _SIGNAL_MARKERS:
+        # `signal(...)` marks variance to preserve under non-aggressive
+        # residualisation; it is meaningful only on a `~|` RHS.
+        if not context.state.in_residualise:
+            raise NwxError(
+                'signal(...) is only valid on a residualisation (~|) RHS'
+            )
+        expr = node.parameters[1]
+        context = expr(context)
+        terms = to_terms(_coerce(context.get_result()))
+        context = context.update_state(signal=context.state.signal + terms)
         return context.with_result(())
     handler = NAMED_FUNCTION_HANDLERS.get(name)
     if handler is not None:
@@ -428,9 +454,20 @@ def RESIDUAL_STRUCTURE_impl(
     target_expr, noise_expr = node.parameters
     context = target_expr(context)
     target = to_terms(_coerce(context.get_result()))
+    # In residualisation context, signal()/noise() route to the signal/noise
+    # sets; unwrapped terms (incl. the de-meaning intercept) are noise.
+    context = context.update_state(in_residualise=True)
     context = noise_expr(context)
-    noise = to_terms(_coerce(context.get_result()))
-    return context.with_result(_Block(lhs=target, rhs=noise, residualise=True))
+    unwrapped = to_terms(_coerce(context.get_result()))
+    signal = context.state.signal
+    extra_noise = context.state.residualise_noise
+    context = context.update_state(
+        in_residualise=False, signal=(), residualise_noise=()
+    )
+    noise = to_terms(unwrapped + extra_noise)
+    return context.with_result(
+        _Block(lhs=target, rhs=noise, residualise=True, signal=signal)
+    )
 
 
 def SUBPARTS_STRUCTURE_impl(
@@ -484,6 +521,7 @@ def _block_to_modelspec(block: _Block) -> ModelSpec:
                 ResidualiseSpec(
                     target=block.lhs,
                     noise=block.rhs,
+                    signal=block.signal,
                     mode=Mode.AGGRESSIVE,
                 ),
             ),
@@ -514,7 +552,35 @@ def _apply_directives(
         updates['estimands'] = directives.estimands
     if directives.inference is not None:
         updates['inference'] = directives.inference
+    if directives.residualise is not None:
+        if spec.residualise:
+            updates['residualise'] = tuple(
+                dataclasses.replace(r, mode=directives.residualise)
+                for r in spec.residualise
+            )
+        else:
+            warnings.warn(
+                'a `residualise=` directive was given but the formula has no '
+                '`~|` residualisation; the directive is ignored'
+            )
     return dataclasses.replace(spec, **updates) if updates else spec
+
+
+def _validate_residualise(specs: tuple[ResidualiseSpec, ...]) -> None:
+    """Enforce the residualisation-mode rules (spec §4.6 / §8): non-aggressive
+    needs a non-empty ``signal`` set (hard error); aggressive ignores any
+    ``signal`` set (warning)."""
+    for r in specs:
+        if r.mode is Mode.NONAGGRESSIVE and not r.signal:
+            raise NwxError(
+                'residualise=nonaggressive requires a signal() set '
+                '(a bare `~|` cannot preserve shared variance); spec §4.6'
+            )
+        if r.mode is Mode.AGGRESSIVE and r.signal:
+            warnings.warn(
+                'aggressive residualisation ignores the signal() set; add '
+                '`{{ residualise=nonaggressive }}` to preserve shared variance'
+            )
 
 
 def init_hook(
@@ -540,6 +606,9 @@ def finalise_hook(context: NwxContext) -> NwxContext:
             smooth=context.state.smooth,
         )
     spec = _apply_directives(spec, directives)
+    _validate_residualise(spec.residualise)
+    for dep in deps:
+        _validate_residualise(dep.spec.residualise)
     root = ModelNode(
         name='root',
         level=directives.level

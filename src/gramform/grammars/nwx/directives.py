@@ -46,6 +46,7 @@ from gramform.grammars.nwx.spec import (
     Level,
     Link,
     Lookup,
+    Mode,
     Severity,
     Test,
     WeightSpec,
@@ -92,6 +93,7 @@ class DirectiveSet:
     errors: ErrorSpec | None = None
     estimands: tuple[ContrastSpec, ...] = ()
     inference: InferenceSpec | None = None
+    residualise: Mode | None = None
     level: Level | None = None
     group_by: tuple[str, ...] = ()
     combine: Combine | None = None
@@ -112,6 +114,7 @@ def parse_directives(text: str) -> DirectiveSet:
     heteroscedasticity: WeightSpec | None = None
     estimands: list[ContrastSpec] = []
     inference: InferenceSpec | None = None
+    residualise_val: Mode | None = None
     level_val: Level | None = None
     group_by: tuple[str, ...] = ()
     combine_val: Combine | None = None
@@ -158,6 +161,8 @@ def parse_directives(text: str) -> DirectiveSet:
             )
         elif key == 'combine':
             combine_val = _enum(Combine, value, 'combine', diagnostics)
+        elif key == 'residualise':
+            residualise_val = _enum(Mode, value, 'residualise', diagnostics)
         elif key == 'inference':
             inference = _parse_inference(value, diagnostics)
         else:
@@ -168,6 +173,10 @@ def parse_directives(text: str) -> DirectiveSet:
     _backend_awareness(
         family_val, link_val, se_val, dof_val, correlation, heteroscedasticity
     )
+    if residualise_val in (Mode.NONAGGRESSIVE, Mode.SOFT):
+        _backend(
+            f'residualise={residualise_val.value} is gated on nitrix v3 §5'
+        )
 
     family = (
         FamilySpec(
@@ -202,6 +211,7 @@ def parse_directives(text: str) -> DirectiveSet:
         errors=errors,
         estimands=tuple(estimands),
         inference=inference,
+        residualise=residualise_val,
         level=level_val,
         group_by=group_by,
         combine=combine_val,
@@ -470,7 +480,7 @@ def _split_top(text: str, sep: str) -> list[str]:
     return parts
 
 
-_E = TypeVar('_E', Family, Link, Level, Combine)
+_E = TypeVar('_E', Family, Link, Level, Combine, Mode)
 
 
 def _enum(
