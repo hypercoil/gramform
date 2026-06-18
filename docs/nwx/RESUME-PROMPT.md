@@ -115,20 +115,52 @@ though the engine imports `numpy`/`scipy`).
   nwx_reference_engine.example` (and `... -m pytest examples/nwx_reference_engine
   /tests`). The engine is NOT in the nox gate (it is a separate consumer).
 
-**Phase 5a is DONE and verified green (2026-06-18) — residualisation modes**
-(`5619fb7`). `~|` is aggressive by default; `{{ residualise=nonaggressive }}`
-flips the mode and **requires** a `signal()` set (hard error otherwise).
-`signal()`/`noise()` are call-position role markers: on a `~|` RHS (a new
-`NwxState.in_residualise` flag set by `RESIDUAL_STRUCTURE_impl`) they route into
-the residualise noise/signal sets (unwrapped terms join noise); `noise()` on a
-*normal* RHS still routes to `ModelSpec.partial` (FWL) — the two stay distinct.
-`signal()` off a `~|` RHS is a hard error. `_validate_residualise` (run on the
-root + frame sub-nodes) enforces §4.6/§8: nonaggressive needs signal (error);
-aggressive + signal warns. `directives.py` adds the `residualise=` key → `Mode`
-(+ `BackendWarning` for nonaggressive/soft). **223 passed / 1 xfailed; all gates
-green; cov 75.5%; engine 27.** *Remaining in Phase 5 (the grammar-heavy part):*
-**5b** the deferred exclusive-state `{{ }}` lexer grammar, then **5c** the
-multi-level `>>` pipeline (see YOUR NEXT TASK).
+**Phase 5 is DONE and verified green (2026-06-18) — M3 reached: the
+distinctive residualisation + multi-level surface.** Three sub-commits:
+- **5a — residualisation modes** (`5619fb7`). `~|` is aggressive by default;
+  `{{ residualise=nonaggressive }}` flips the mode and **requires** a `signal()`
+  set (hard error). `signal()`/`noise()` are call-position role markers: on a
+  `~|` RHS (a new `NwxState.in_residualise` flag set by
+  `RESIDUAL_STRUCTURE_impl`) they route into the residualise noise/signal sets
+  (unwrapped terms join noise); `noise()` on a *normal* RHS still routes to
+  `ModelSpec.partial` (FWL) — distinct. `signal()` off a `~|` RHS is a hard
+  error. `_validate_residualise` (root + frame sub-nodes) enforces §4.6/§8.
+- **5b — grammar-integrated `{{ }}`** (`0440263`). Retired the Phase-1 textual
+  split; a `DirectiveComponent` captures `{{ ... }}` as one `DIRECTIVE_BLOCK`
+  function-token (out-ranks `EXECUTE` `{...}`); productions
+  `program : pipeline [DIRECTIVE_BLOCK]` (outermost node) and
+  `factor : LBRACKET formula DIRECTIVE_BLOCK RBRACKET` (frame node). The block
+  is opaque to the term lexer, so the directive `:`/`=` never collide with the
+  term algebra's — the isolation an exclusive lexer state was meant to give,
+  with a single blob token (no state needed). An nwx-aware intercept
+  postprocessor (`nwx_add_intercept`) descends past the directive wrappers.
+- **5c — multi-level `>>`** (`4f9abb6`). A `PipelineComponent` adds the
+  `STAGE_PIPE (>>)` token + `pipeline` productions (associative `PIPELINE`).
+  `PIPELINE_impl` builds one `ModelNode` per stage (a `[...]` stage is a node,
+  NOT an inline `_hat` referent — the R5 stage/frame position split) with an
+  `Edge` between consecutive stages carrying the upstream cope/varcope. A `.`
+  on a downstream stage LHS resolves to the prior stage's cope
+  (`Referent(stage, 'cope')`) via `NwxState.inbound_stage`; outside a pipeline
+  `.` stays the complement. A trailing block after the whole pipeline is
+  graph-level (`ModelGraph.inference`). The §11 run→subject→dataset example
+  parses to the right node/edge/referent graph.
+- **Verified: 246 passed / 1 xfailed; ruff + format clean; pyright 0 on nwx;
+  conflict gate = 0 (incl. NwxGrammar with all six components); cov 76%;
+  engine 27 passed.**
+
+**Phase-5 hard-won facts:**
+- A blob `DIRECTIVE_BLOCK` token (function token, so it out-ranks the
+  string-defined `EXECUTE`) gives positional directive attachment without an
+  exclusive lexer state — the directive `:`/`=` never reach the term lexer.
+- The wilkinson `ppr_add_intercept` is unaware of the nwx top nodes
+  (`PROGRAM_DIRECTIVES`/`FRAME_DIRECTIVES`/`PIPELINE`); use the nwx
+  `nwx_add_intercept` which descends past the opaque string operands. A pipeline
+  *frame* stage gets its intercept INSIDE the frame (so `PIPELINE_impl` can
+  still unwrap the `PUSH_FRAME`); a bare stage gets it on the formula.
+- `.` disambiguation is by parse position: set `inbound_stage` before
+  evaluating each downstream stage; `VARIABLE_COMPLEMENT_impl` reads it.
+- `Edge.carry.contrast` binds the upstream's first contrast name (or `''`); the
+  precise FLAME varcope binding is engine/Phase-7 territory.
 
 **Phase 4 is MOSTLY DONE and verified green (2026-06-18) — M2 reached
 functionally (GAM/GAMM formulae + full directives).** Three sub-commits:
@@ -327,54 +359,47 @@ If the venv ever breaks, rebuild it **only on /scratch**:
 `uv pip install --python /scratch/gramform-venv/bin/python ply wadler-lindig pydantic formulaic narwhals numpy pandas pytest pytest-cov "coverage[toml]" ruff pyright`
 (set `UV_CACHE_DIR`/`UV_PYTHON_INSTALL_DIR`/`TMPDIR` to `/scratch/...` first).
 
-## YOUR NEXT TASK — Phase 5b/5c: exclusive-state `{{ }}` grammar + multi-level
+## YOUR NEXT TASK — Phase 6 (covariate program) then Phase 7 (validate + BIDS)
 
-Phase 4 (M2) and Phase **5a** (residualisation modes) are DONE. Two coupled
-threads remain — do them together; they share the grammar surgery and the
-conflict gate:
+Phases 1–5 are DONE (M1–M3). Two phases remain:
 
-**5b — the deferred exclusive-state directive grammar (Phase-4 carryover).**
-`grammars/nwx/grammar.py` gains a `DirectiveComponent` with an **EXCLUSIVE**
-`spec` state (`('spec','exclusive')`, entered on `{{`, exited on `}}`) defining
-its own `;`/`=`/`:`/`,`/`(`/`)`/name/number/string tokens so the directive `:`
-(contrasts) and `=` (key=val) do NOT collide with the default-state
-`INTERACTION_ONLY (:)`/`ASSIGN (=)`. (`minimaltest`'s `param` state is the
-pattern but *inclusive* — make `nwx`'s **exclusive**.) Real productions attach
-`directives_opt` to `node` / `frame` (§4.5 scoping: node-level inside `[]`,
-graph-level after `>>`). This RETIRES the Phase-1 textual split in
-`transform.py` (`_split_directives` / `_DIRECTIVE_RE`); the lowering reuses the
-existing `directives.parse_directives` content layer (or new interpreter ops).
-**Re-assert `NwxGrammar().conflicts == ()`** + exclusive-state isolation tests
-(a directive `:`/`=` must not leak into the term algebra and vice-versa). 5b is
-the load-bearing prerequisite for per-stage directives in 5c.
+**Phase 6 — `CovariateProgram` completeness** (`implementation-plan.md` Phase 6;
+disjoint `covariate.py`, independent of the grammar). Extend the minimal Phase-1
+`CovariateOp` set to the full closed union harvested from `grammars/minimaltest/`
+(`Shorthand`, `Derivative`, `Power`, `CompCorSelect` via `{{…}}`, `Indicator`,
+`SetOp`, `Scatter`); wire covariate shorthands into the term interpreter (they
+are defined but NOT yet lowered into terms — `csf` is passthrough, not a
+shorthand). Shorthand expansions as a preprocessor (the
+`confound_formula_preprocessor` pattern). **Emit-only** (nwx holds no array).
+Tests: 36P `(dd_(rps+wm+csf+gsr))^^2`, spike `:::`/`OR_`/`I_`, aCompCor `v_`
+→ expected `CovariateProgram` + term set. Fixes the one `xfail`ed `minimaltest`
+transform test (API drift).
 
-**5c — multi-level graph (`implementation-plan.md` Phase 5).**
-`transform_struct.py` + `grammar.py` (`PipelineComponent`). Token
-`STAGE_PIPE (>>)`; a `node_seq` top rule builds a `ModelGraph` with `Edge`s;
-`Edge.carry` binds an upstream `ContrastSpec` name + `{cope,varcope}`;
-`.`-on-stage-LHS = inbound cope (disambiguate from the `VARIABLE_COMPLEMENT`
-complement by position). `ModelNode.level`/`group_by`/`combine` already flow
-from directives (Phase 4b). M3 (the distinctive multi-level surface) is the end
-of P5. *(The residualise-modes half of plan-Phase-5 is already done — 5a.)*
+**Phase 7 — validation, errors, contract, BIDS-SM importer** (last).
+`validate(graph) -> tuple[Diagnostic, ...]` per §8: rank/identifiability,
+intercept, RE well-formedness, **smooth factor-`by=` without its main effect**
+(deferred from P4), non-aggressive-needs-signal (already enforced at parse —
+move/duplicate as a Diagnostic), reserved-name shadowing, **multi-level DAG +
+`Edge.carry.contrast` resolves to a real upstream `ContrastSpec`** (the carry
+binding `PIPELINE_impl` left as a default), `.` disambiguation, backend-awareness
+roll-up. Plus the engine-contract doc + a dry-run dispatcher under `tests/nwx/`
+and the read-direction BIDS Stats Models importer (`model.json` → `ModelGraph`).
 
-> Phase 6 (covariate→term lowering, disjoint `covariate.py`) is independent and
-> can interleave. Phase 7 (validate.py + BIDS-SM importer) is last; it also
-> owns the §8 checks deferred from earlier phases (smooth factor-`by=` without
-> its main effect; RE well-formedness; directive scoping). The reference engine
-> extends in lockstep as kernels are surfaced (smooths → `gam_fit`; random
-> effects → `lme_fit`; non-aggressive → `partial_residualise`; FLAME chaining).
+> The reference engine extends in lockstep as nitrix kernels are surfaced
+> (smooths → `gam_fit`; random effects → `lme_fit`; non-aggressive →
+> `partial_residualise`; FLAME two-level chaining for the `>>` graph). Today the
+> Phase-2 engine rejects populated `random`/`smooth`/`residualise`/multi-node IR
+> with a helpful `EngineError`.
 
 ## Roadmap (phases 1–7) & milestones
 
 ```
 Phase 0 ✅ ─▶ 1 ✅ ─▶ 2 ✅ (runnable slice) ─┬─▶ 3 ✅ (random effects) ─┐
-                                            ├─▶ 4 ~✅ (smooths+directives;┼▶ 5 ▶ 7
-                                            │     {{}} lexer -> P5)       │
-                                            └─▶ 6 (covariate prog) ───────┘
-  (4~✅ = GAM/GAMM smooths + full directives + error structures done; the
-   exclusive-state {{}} lexer grammar is folded into Phase 5.
-   5 in progress: 5a residualise modes ✅; 5b {{}} grammar + 5c multi-level >>
-   remain.)
+                                            ├─▶ 4 ✅ (smooths+directives)┼▶ 5 ✅ ▶ 7
+                                            └─▶ 6 (covariate prog) ──────┘
+  (5 ✅ = 5a residualise modes + 5b grammar-integrated {{}} + 5c multi-level >>.
+   The exclusive-state {{}} lexer was realised as a blob token in 5b.
+   Remaining: 6 (covariate program), 7 (validate + BIDS-SM importer).)
 ```
 - **M1** (end P2): nwx usable, formula→corrected stat-map via the external
   reference engine. **M2** (end P4): GAM/GLMM formulae + full directives.
