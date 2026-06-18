@@ -115,6 +115,21 @@ though the engine imports `numpy`/`scipy`).
   nwx_reference_engine.example` (and `... -m pytest examples/nwx_reference_engine
   /tests`). The engine is NOT in the nox gate (it is a separate consumer).
 
+**Phase 5a is DONE and verified green (2026-06-18) — residualisation modes**
+(`5619fb7`). `~|` is aggressive by default; `{{ residualise=nonaggressive }}`
+flips the mode and **requires** a `signal()` set (hard error otherwise).
+`signal()`/`noise()` are call-position role markers: on a `~|` RHS (a new
+`NwxState.in_residualise` flag set by `RESIDUAL_STRUCTURE_impl`) they route into
+the residualise noise/signal sets (unwrapped terms join noise); `noise()` on a
+*normal* RHS still routes to `ModelSpec.partial` (FWL) — the two stay distinct.
+`signal()` off a `~|` RHS is a hard error. `_validate_residualise` (run on the
+root + frame sub-nodes) enforces §4.6/§8: nonaggressive needs signal (error);
+aggressive + signal warns. `directives.py` adds the `residualise=` key → `Mode`
+(+ `BackendWarning` for nonaggressive/soft). **223 passed / 1 xfailed; all gates
+green; cov 75.5%; engine 27.** *Remaining in Phase 5 (the grammar-heavy part):*
+**5b** the deferred exclusive-state `{{ }}` lexer grammar, then **5c** the
+multi-level `>>` pipeline (see YOUR NEXT TASK).
+
 **Phase 4 is MOSTLY DONE and verified green (2026-06-18) — M2 reached
 functionally (GAM/GAMM formulae + full directives).** Three sub-commits:
 - **4a — GAM/GAMM smooths** (`grammars/nwx/transform_smooth.py`, new). `s`/`te`/
@@ -312,14 +327,13 @@ If the venv ever breaks, rebuild it **only on /scratch**:
 `uv pip install --python /scratch/gramform-venv/bin/python ply wadler-lindig pydantic formulaic narwhals numpy pandas pytest pytest-cov "coverage[toml]" ruff pyright`
 (set `UV_CACHE_DIR`/`UV_PYTHON_INSTALL_DIR`/`TMPDIR` to `/scratch/...` first).
 
-## YOUR NEXT TASK — Phase 5: residualise modes + multi-level graph (+ the
-## deferred exclusive-state `{{ }}` lexer grammar)
+## YOUR NEXT TASK — Phase 5b/5c: exclusive-state `{{ }}` grammar + multi-level
 
-Phase 4's GAM/GAMM smooths + full directives + error structures are DONE (M2).
-Two threads remain before Phase 7; do them together because they share the
-grammar surgery and the conflict gate:
+Phase 4 (M2) and Phase **5a** (residualisation modes) are DONE. Two coupled
+threads remain — do them together; they share the grammar surgery and the
+conflict gate:
 
-**(1) The deferred exclusive-state directive grammar (Phase-4 carryover).**
+**5b — the deferred exclusive-state directive grammar (Phase-4 carryover).**
 `grammars/nwx/grammar.py` gains a `DirectiveComponent` with an **EXCLUSIVE**
 `spec` state (`('spec','exclusive')`, entered on `{{`, exited on `}}`) defining
 its own `;`/`=`/`:`/`,`/`(`/`)`/name/number/string tokens so the directive `:`
@@ -331,18 +345,17 @@ graph-level after `>>`). This RETIRES the Phase-1 textual split in
 `transform.py` (`_split_directives` / `_DIRECTIVE_RE`); the lowering reuses the
 existing `directives.parse_directives` content layer (or new interpreter ops).
 **Re-assert `NwxGrammar().conflicts == ()`** + exclusive-state isolation tests
-(a directive `:`/`=` must not leak into the term algebra and vice-versa).
+(a directive `:`/`=` must not leak into the term algebra and vice-versa). 5b is
+the load-bearing prerequisite for per-stage directives in 5c.
 
-**(2) Residualisation modes + multi-level (`implementation-plan.md` Phase 5).**
-`transform_struct.py` + `grammar.py` (`PipelineComponent`). `~|` →
-`ResidualiseSpec(AGGRESSIVE)` by default; `{{ residualise=nonaggressive }}`
-flips mode and **requires** a `signal()` set (hard error otherwise).
-`signal()/noise()` (call-position) route terms into `ResidualiseSpec.signal/
-.noise`; `noise()` on a *normal* RHS already routes to `ModelSpec.partial`
-(Phase 2). Multi-level: token `STAGE_PIPE (>>)`; a `node_seq` top rule builds
-a `ModelGraph` with `Edge`s; `Edge.carry` binds an upstream `ContrastSpec` name
-+ `{cope,varcope}`; `.`-on-stage-LHS = inbound cope (disambiguate from
-complement by position). M3 (residualisation + multi-level) is the end of P5.
+**5c — multi-level graph (`implementation-plan.md` Phase 5).**
+`transform_struct.py` + `grammar.py` (`PipelineComponent`). Token
+`STAGE_PIPE (>>)`; a `node_seq` top rule builds a `ModelGraph` with `Edge`s;
+`Edge.carry` binds an upstream `ContrastSpec` name + `{cope,varcope}`;
+`.`-on-stage-LHS = inbound cope (disambiguate from the `VARIABLE_COMPLEMENT`
+complement by position). `ModelNode.level`/`group_by`/`combine` already flow
+from directives (Phase 4b). M3 (the distinctive multi-level surface) is the end
+of P5. *(The residualise-modes half of plan-Phase-5 is already done — 5a.)*
 
 > Phase 6 (covariate→term lowering, disjoint `covariate.py`) is independent and
 > can interleave. Phase 7 (validate.py + BIDS-SM importer) is last; it also
@@ -359,7 +372,9 @@ Phase 0 ✅ ─▶ 1 ✅ ─▶ 2 ✅ (runnable slice) ─┬─▶ 3 ✅ (rando
                                             │     {{}} lexer -> P5)       │
                                             └─▶ 6 (covariate prog) ───────┘
   (4~✅ = GAM/GAMM smooths + full directives + error structures done; the
-   exclusive-state {{}} lexer grammar is folded into Phase 5.)
+   exclusive-state {{}} lexer grammar is folded into Phase 5.
+   5 in progress: 5a residualise modes ✅; 5b {{}} grammar + 5c multi-level >>
+   remain.)
 ```
 - **M1** (end P2): nwx usable, formula→corrected stat-map via the external
   reference engine. **M2** (end P4): GAM/GLMM formulae + full directives.
