@@ -42,6 +42,7 @@ import warnings
 
 from gramform.core import Primitive
 from gramform.grammars.nwx.spec import (
+    BackendWarning,
     FactorSpec,
     GroupingSpec,
     Lookup,
@@ -59,10 +60,9 @@ from gramform.grammars.nwx.transform import (
 )
 from gramform.grammars.wilkinson.transform import add_intercept_to_formula
 
-
-class BackendWarning(UserWarning):
-    """A backend-awareness warning: the emitted IR is well-formed but lowers
-    onto a ``nitrix`` kernel that is not yet shipped (cites the v3 FR)."""
+#: Re-exported for the smooth / directive modules and the Phase-3 tests; the
+#: canonical definition lives in :mod:`gramform.grammars.nwx.spec`.
+__all__ = ['BackendWarning', 'RANDOM_EFFECT_impl', 'GROUPING_impl']
 
 
 # ---------------------------------------------------------------------------

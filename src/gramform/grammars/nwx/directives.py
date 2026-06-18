@@ -2,14 +2,16 @@
 # emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
 # vi: set ft=python sts=4 ts=4 sw=4 et:
 """
-``nwx`` directive mini-parser (minimal, Phase 1)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``nwx`` directive mini-parser (full key set, Phase 4)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Parses the *text* inside a ``{{ ... }}`` directive block into the typed IR
 fragments it populates -- :class:`FamilySpec`, :class:`EstimationSpec`,
-:class:`ContrastSpec`, :class:`InferenceSpec`. Phase 1 honours only the keys
-the runnable slice needs (``family``/``link``/``estimator``/``se``/``dof``/
-``contrasts``/``inference``); the full key set + an integrated *exclusive*
-lexer state land in Phase 4. Unknown keys warn (forward-compat), never error.
+:class:`ErrorSpec`, :class:`ContrastSpec`, :class:`InferenceSpec`, and the
+node-level ``level`` / ``group_by`` / ``combine``. Recognised v1 keys (spec
+§4.5): ``family``, ``link``, ``estimator``, ``correlation``, ``weights``,
+``se``, ``dof``, ``level``, ``group_by``, ``combine``, ``contrasts``,
+``inference``. Unknown keys warn (forward-compat), never error; directives
+whose nitrix kernel is not yet shipped warn (:class:`BackendWarning`, §7).
 
 The directive grammar (spec §4.5):
 
@@ -18,46 +20,65 @@ The directive grammar (spec §4.5):
                | "contrasts" ":" contrast ("," contrast)*
     contrast   : NAME "=" contrast_expr ("(" test ")")?
 
-In this Phase-1 text parser, ``;`` separates directives and (inside a
-``contrasts`` clause) ``,`` separates contrasts; neither appears inside a value
-in the minimal key set, so a split is unambiguous.
+In this text parser, ``;`` separates directives and (inside a ``contrasts``
+clause) ``,`` separates contrasts at parenthesis depth zero. The integrated
+*exclusive* ``{{ }}`` lexer state is a separate change; this parser is the
+content layer it (and the current trailing-block split) feed.
 """
 
 import re
+import warnings
 from dataclasses import dataclass, field
 from typing import Literal, TypeVar, cast, get_args
 
 from gramform.grammars.nwx.spec import (
+    BackendWarning,
+    Combine,
     ContrastSpec,
+    CorrelationSpec,
     Diagnostic,
+    ErrorSpec,
     EstimationSpec,
+    FactorSpec,
     Family,
     FamilySpec,
     InferenceSpec,
+    Level,
     Link,
+    Lookup,
     Severity,
     Test,
+    WeightSpec,
 )
 
 _Estimator = Literal['ols', 'wls', 'irls', 'reml', 'ml', 'flame']
 _SE = Literal['model', 'robust', 'cluster']
+_Robust = Literal['hc0', 'hc1', 'hc2', 'hc3']
 _Dof = Literal['residual', 'satterthwaite', 'kr']
+_CorrKind = Literal['ar1', 'car1', 'cs']
+_WeightKind = Literal['varIdent', 'varPower']
 _InferKind = Literal['parametric', 'permutation']
 _Enhancement = Literal['voxel', 'tfce', 'cluster_extent', 'cluster_mass']
 _Correction = Literal['fdr', 'bonferroni', 'fwe', 'rft']
 
 _ESTIMATORS: tuple[str, ...] = get_args(_Estimator)
 _SES: tuple[str, ...] = get_args(_SE)
+_ROBUSTS: tuple[str, ...] = get_args(_Robust)
 _DOFS: tuple[str, ...] = get_args(_Dof)
+_CORR_KINDS: tuple[str, ...] = get_args(_CorrKind)
+_WEIGHT_KINDS: tuple[str, ...] = get_args(_WeightKind)
 _ENHANCEMENTS: tuple[str, ...] = get_args(_Enhancement)
 _CORRECTIONS: tuple[str, ...] = get_args(_Correction)
 
 #: Surface aliases for enhancement names.
 _ENHANCEMENT_ALIASES: dict[str, str] = {'cluster': 'cluster_extent'}
 
-#: Recognised v1 directive keys (Phase-1 subset).
-_KNOWN_KEYS: frozenset[str] = frozenset(
-    {'family', 'link', 'estimator', 'se', 'dof', 'inference'}
+#: Families / links whose nitrix kernel ships in v1 (the rest warn, spec §7).
+_SHIPPED_FAMILIES: frozenset[Family] = frozenset(
+    {Family.GAUSSIAN, Family.BINOMIAL, Family.POISSON}
+)
+_SHIPPED_LINKS: frozenset[Link] = frozenset(
+    {Link.IDENTITY, Link.LOG, Link.LOGIT}
 )
 
 
@@ -68,8 +89,12 @@ class DirectiveSet:
 
     family: FamilySpec | None = None
     estimation: EstimationSpec | None = None
+    errors: ErrorSpec | None = None
     estimands: tuple[ContrastSpec, ...] = ()
     inference: InferenceSpec | None = None
+    level: Level | None = None
+    group_by: tuple[str, ...] = ()
+    combine: Combine | None = None
     diagnostics: tuple[Diagnostic, ...] = field(default_factory=tuple)
 
 
@@ -80,9 +105,16 @@ def parse_directives(text: str) -> DirectiveSet:
     link_val: Link | None = None
     estimator_val: _Estimator | None = None
     se_val: _SE | None = None
+    robust_val: _Robust | None = None
+    cluster_by: str | None = None
     dof_val: _Dof | None = None
+    correlation: CorrelationSpec | None = None
+    heteroscedasticity: WeightSpec | None = None
     estimands: list[ContrastSpec] = []
     inference: InferenceSpec | None = None
+    level_val: Level | None = None
+    group_by: tuple[str, ...] = ()
+    combine_val: Combine | None = None
 
     for raw in _split_top(text, ';'):
         clause = raw.strip()
@@ -109,19 +141,33 @@ def parse_directives(text: str) -> DirectiveSet:
                 _literal(value, _ESTIMATORS, 'estimator', diagnostics),
             )
         elif key == 'se':
-            se_val = cast(
-                '_SE | None', _literal(value, _SES, 'se', diagnostics)
-            )
+            se_val, robust_val, cluster_by = _parse_se(value, diagnostics)
         elif key == 'dof':
             dof_val = cast(
                 '_Dof | None', _literal(value, _DOFS, 'dof', diagnostics)
             )
+        elif key == 'correlation':
+            correlation = _parse_correlation(value, diagnostics)
+        elif key == 'weights':
+            heteroscedasticity = _parse_weights(value, diagnostics)
+        elif key == 'level':
+            level_val = _enum(Level, value, 'level', diagnostics)
+        elif key == 'group_by':
+            group_by = tuple(
+                v.strip() for v in _split_top(value, ',') if v.strip()
+            )
+        elif key == 'combine':
+            combine_val = _enum(Combine, value, 'combine', diagnostics)
         elif key == 'inference':
             inference = _parse_inference(value, diagnostics)
         else:
             diagnostics.append(
                 _warn('directive', f'unknown directive key: {key!r}')
             )
+
+    _backend_awareness(
+        family_val, link_val, se_val, dof_val, correlation, heteroscedasticity
+    )
 
     family = (
         FamilySpec(
@@ -135,18 +181,140 @@ def parse_directives(text: str) -> DirectiveSet:
         EstimationSpec(
             estimator=estimator_val or 'ols',
             se=se_val or 'model',
+            robust_variant=robust_val,
+            cluster_by=cluster_by,
             dof=dof_val,
         )
         if (estimator_val or se_val or dof_val)
         else None
     )
+    errors = (
+        ErrorSpec(
+            correlation=correlation,
+            heteroscedasticity=heteroscedasticity,
+        )
+        if (correlation is not None or heteroscedasticity is not None)
+        else None
+    )
     return DirectiveSet(
         family=family,
         estimation=estimation,
+        errors=errors,
         estimands=tuple(estimands),
         inference=inference,
+        level=level_val,
+        group_by=group_by,
+        combine=combine_val,
         diagnostics=tuple(diagnostics),
     )
+
+
+# ---------------------------------------------------------------------------
+# standard-error, correlation, weights, backend awareness
+# ---------------------------------------------------------------------------
+
+
+def _parse_se(
+    value: str,
+    diagnostics: list[Diagnostic],
+) -> tuple[_SE | None, _Robust | None, str | None]:
+    """``se=robust`` / ``se=robust(hc3)`` / ``se=cluster(subject)``."""
+    m = _CALL_RE.match(value)
+    if not m:
+        diagnostics.append(_warn('se', f'malformed se: {value!r}'))
+        return None, None, None
+    kind = cast('_SE | None', _literal(m.group(1), _SES, 'se', diagnostics))
+    arg = (m.group(2) or '').strip()
+    robust: _Robust | None = None
+    cluster_by: str | None = None
+    if kind == 'robust' and arg:
+        robust = cast(
+            '_Robust | None', _literal(arg, _ROBUSTS, 'se', diagnostics)
+        )
+    elif kind == 'cluster' and arg:
+        cluster_by = arg
+    return kind, robust, cluster_by
+
+
+def _parse_correlation(
+    value: str,
+    diagnostics: list[Diagnostic],
+) -> CorrelationSpec | None:
+    """``correlation=ar1(time | g)`` -> a within-group correlation structure."""
+    m = _CALL_RE.match(value)
+    if not m or m.group(2) is None:
+        diagnostics.append(
+            _warn('correlation', f'malformed correlation: {value!r}')
+        )
+        return None
+    kind = m.group(1).lower()
+    if kind not in _CORR_KINDS:
+        diagnostics.append(
+            _warn('correlation', f'unknown correlation: {kind!r}')
+        )
+        return None
+    index_raw, sep, group_raw = m.group(2).partition('|')
+    index_raw, group_raw = index_raw.strip(), group_raw.strip()
+    if not sep or not index_raw or not group_raw:
+        diagnostics.append(
+            _warn('correlation', f'expected `kind(index | group)`: {value!r}')
+        )
+        return None
+    return CorrelationSpec(
+        kind=cast('_CorrKind', kind),
+        index=FactorSpec(Lookup(index_raw)),
+        group=FactorSpec(Lookup(group_raw)),
+    )
+
+
+def _parse_weights(
+    value: str,
+    diagnostics: list[Diagnostic],
+) -> WeightSpec | None:
+    """``weights=varPower(x)`` / ``weights=varIdent(g)``."""
+    m = _CALL_RE.match(value)
+    if not m or m.group(2) is None:
+        diagnostics.append(_warn('weights', f'malformed weights: {value!r}'))
+        return None
+    kind = m.group(1)
+    if kind not in _WEIGHT_KINDS:
+        diagnostics.append(_warn('weights', f'unknown weights: {kind!r}'))
+        return None
+    arg = m.group(2).strip()
+    if not arg:
+        diagnostics.append(_warn('weights', 'weights needs an argument'))
+        return None
+    return WeightSpec(
+        kind=cast('_WeightKind', kind), arg=FactorSpec(Lookup(arg))
+    )
+
+
+def _backend_awareness(
+    family: Family | None,
+    link: Link | None,
+    se: _SE | None,
+    dof: _Dof | None,
+    correlation: CorrelationSpec | None,
+    weights: WeightSpec | None,
+) -> None:
+    """Emit a :class:`BackendWarning` for valid IR whose nitrix kernel is not
+    yet shipped (spec §7), so specs stay forward-compatible."""
+    if family is not None and family not in _SHIPPED_FAMILIES:
+        _backend(f'family {family.value!r} is gated on nitrix v3 §4')
+    if link is not None and link not in _SHIPPED_LINKS:
+        _backend(f'link {link.value!r} is gated on nitrix v3 §4')
+    if se in ('robust', 'cluster'):
+        _backend(f'se={se} is gated on nitrix v3 §6.2')
+    if dof in ('satterthwaite', 'kr'):
+        _backend(f'dof={dof} is gated on nitrix v3 §1.3')
+    if correlation is not None:
+        _backend(f'correlation={correlation.kind} is gated on nitrix v3 §1.4')
+    if weights is not None:
+        _backend(f'weights={weights.kind} (heteroscedasticity) is gated on v3')
+
+
+def _backend(message: str) -> None:
+    warnings.warn(message, BackendWarning, stacklevel=3)
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +470,7 @@ def _split_top(text: str, sep: str) -> list[str]:
     return parts
 
 
-_E = TypeVar('_E', Family, Link)
+_E = TypeVar('_E', Family, Link, Level, Combine)
 
 
 def _enum(

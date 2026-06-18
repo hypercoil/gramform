@@ -441,6 +441,12 @@ class Diagnostic:
     where: str
 
 
+class BackendWarning(UserWarning):
+    """A backend-awareness warning: the emitted IR is well-formed but lowers
+    onto a ``nitrix`` kernel that is not yet shipped (cites the v3 FR). Emitted
+    at parse time for forward-compatible specs (spec §7 / §8)."""
+
+
 @runtime_checkable
 class Lowerable(Protocol):
     """The single open, engine-owned seam. Implemented engine-side; ``nwx``

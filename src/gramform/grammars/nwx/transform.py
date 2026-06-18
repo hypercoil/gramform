@@ -363,9 +363,9 @@ def NESTED_impl(node: Primitive, context: NwxContext) -> NwxContext:
 _PARTIAL_MARKERS = frozenset({'noise', 'nuisance'})
 
 #: Extra ``NAME(...)`` call handlers contributed by feature-family modules
-#: (smooths register ``s``/``te``/``ti``/``t2`` here at import). A handler takes
-#: the ``NAMED_FUNCTION`` node + context and returns a context whose result is
-#: the call's term contribution (``()`` when it routes to a non-fixed tuple).
+#: (smooths register ``s``/``te``/``ti``/``t2`` here at import). A handler
+#: takes the ``NAMED_FUNCTION`` node + context and returns a context whose
+#: result is the call's term contribution (``()`` when it routes elsewhere).
 NAMED_FUNCTION_HANDLERS: dict[
     str, Callable[[Primitive, 'NwxContext'], 'NwxContext']
 ] = {}
@@ -386,7 +386,7 @@ def NAMED_FUNCTION_impl(node: Primitive, context: NwxContext) -> NwxContext:
     handler = NAMED_FUNCTION_HANDLERS.get(name)
     if handler is not None:
         return handler(node, context)
-    # Data-transform functions (plain `bs`/`ns`/`poly`) arrive in a later phase.
+    # Data-transform functions (plain `bs`/`ns`/`poly`) arrive later.
     raise NotImplementedError(
         f'function-call terms ({name}(...)) are not supported yet'
     )
@@ -508,6 +508,8 @@ def _apply_directives(
         updates['family'] = directives.family
     if directives.estimation is not None:
         updates['estimation'] = directives.estimation
+    if directives.errors is not None:
+        updates['errors'] = directives.errors
     if directives.estimands:
         updates['estimands'] = directives.estimands
     if directives.inference is not None:
@@ -540,9 +542,13 @@ def finalise_hook(context: NwxContext) -> NwxContext:
     spec = _apply_directives(spec, directives)
     root = ModelNode(
         name='root',
-        level=Level.DATASET,
-        group_by=(),
-        combine=Combine.FIXED,
+        level=directives.level
+        if directives and directives.level
+        else (Level.DATASET),
+        group_by=directives.group_by if directives else (),
+        combine=directives.combine
+        if directives and directives.combine
+        else (Combine.FIXED),
         spec=spec,
     )
     graph = ModelGraph(nodes=(root, *deps), edges=())

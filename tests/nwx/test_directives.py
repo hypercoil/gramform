@@ -2,11 +2,34 @@
 # emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
 # vi: set ft=python sts=4 ts=4 sw=4 et:
 """
-Unit tests for the minimal Phase-1 directive mini-parser.
+Unit tests for the directive mini-parser (full Phase-4 key set).
 """
 
+import warnings
+
+import pytest
+
 from gramform.grammars.nwx.directives import parse_directives
-from gramform.grammars.nwx.spec import Family, Link, Severity
+from gramform.grammars.nwx.spec import (
+    BackendWarning,
+    Combine,
+    CorrelationSpec,
+    FactorSpec,
+    Family,
+    Level,
+    Link,
+    Lookup,
+    Severity,
+    WeightSpec,
+)
+from gramform.grammars.nwx.transform import get_processor
+
+
+def _quiet(text: str):
+    """Parse, silencing backend-awareness warnings (asserted separately)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', BackendWarning)
+        return parse_directives(text)
 
 
 def test_family_and_link():
@@ -17,7 +40,7 @@ def test_family_and_link():
 
 
 def test_estimation_keys_merge_into_one_spec():
-    d = parse_directives('estimator=reml; se=robust; dof=satterthwaite')
+    d = _quiet('estimator=reml; se=robust; dof=satterthwaite')
     assert d.estimation is not None
     assert d.estimation.estimator == 'reml'
     assert d.estimation.se == 'robust'
@@ -76,3 +99,111 @@ def test_empty_block_is_inert():
     assert d.estimands == ()
     assert d.inference is None
     assert d.diagnostics == ()
+
+
+# ---------------------------------------------------------------------------
+# full Phase-4 key set: robust/cluster se, error structures, node-level keys
+# ---------------------------------------------------------------------------
+
+
+def test_robust_se_variant():
+    d = _quiet('se=robust(hc3)')
+    assert d.estimation.se == 'robust'
+    assert d.estimation.robust_variant == 'hc3'
+
+
+def test_cluster_se():
+    d = _quiet('se=cluster(subject)')
+    assert d.estimation.se == 'cluster'
+    assert d.estimation.cluster_by == 'subject'
+
+
+def test_correlation_structure():
+    d = _quiet('correlation=ar1(session | subject)')
+    assert d.errors is not None
+    assert d.errors.correlation == CorrelationSpec(
+        kind='ar1',
+        index=FactorSpec(Lookup('session')),
+        group=FactorSpec(Lookup('subject')),
+    )
+
+
+def test_weights_structure():
+    d = _quiet('weights=varPower(meanFD)')
+    assert d.errors is not None
+    assert d.errors.heteroscedasticity == WeightSpec(
+        kind='varPower', arg=FactorSpec(Lookup('meanFD'))
+    )
+
+
+def test_node_level_keys():
+    d = _quiet('level=subject; group_by=subject; combine=fixed')
+    assert d.level is Level.SUBJECT
+    assert d.group_by == ('subject',)
+    assert d.combine is Combine.FIXED
+
+
+def test_group_by_multiple():
+    d = _quiet('group_by=site, subject')
+    assert d.group_by == ('site', 'subject')
+
+
+def test_malformed_correlation_warns():
+    d = _quiet('correlation=ar1(time)')  # missing the `| group`
+    assert d.errors is None
+    assert any(x.where == 'correlation' for x in d.diagnostics)
+
+
+# ---------------------------------------------------------------------------
+# backend-awareness warnings (spec §7)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        'family=gamma',
+        'link=probit',
+        'se=robust',
+        'se=cluster(subject)',
+        'dof=satterthwaite',
+        'correlation=ar1(time | g)',
+        'weights=varPower(x)',
+    ],
+)
+def test_backend_awareness_warns(text):
+    with pytest.warns(BackendWarning):
+        parse_directives(text)
+
+
+def test_shipped_directives_do_not_warn():
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', BackendWarning)
+        parse_directives('family=binomial; link=logit; estimator=reml')
+
+
+# ---------------------------------------------------------------------------
+# end-to-end: directives land on the ModelSpec / ModelNode via the processor
+# ---------------------------------------------------------------------------
+
+
+def test_error_structure_lands_on_modelspec():
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', BackendWarning)
+        g = get_processor()(
+            'y ~ x {{ correlation=ar1(session | subject) }}'
+        )
+    errors = g.nodes[0].spec.errors
+    assert errors is not None
+    assert errors.correlation is not None
+    assert errors.correlation.kind == 'ar1'
+
+
+def test_node_level_directives_land_on_node():
+    g = get_processor()(
+        'cope ~ cond {{ level=subject; group_by=subject; combine=mixed }}'
+    )
+    node = g.nodes[0]
+    assert node.level is Level.SUBJECT
+    assert node.group_by == ('subject',)
+    assert node.combine is Combine.MIXED
