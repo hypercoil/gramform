@@ -63,6 +63,7 @@ RANDOM_EFFECT = CorePrimitive('RANDOM_EFFECT', is_associative=False)
 GROUPING = CorePrimitive('GROUPING', is_associative=False)
 PROGRAM_DIRECTIVES = CorePrimitive('PROGRAM_DIRECTIVES', is_associative=False)
 FRAME_DIRECTIVES = CorePrimitive('FRAME_DIRECTIVES', is_associative=False)
+PIPELINE = CorePrimitive('PIPELINE', is_associative=True)
 
 
 def _directive_token(t, grammar):
@@ -149,13 +150,13 @@ class DirectiveComponent(GrammarComponent):
     production_rules: Tuple[ProductionRule, ...] = (
         ProductionRule(
             'program_plain',
-            'program : formula',
+            'program : pipeline',
             unit_lift(),
         ),
         ProductionRule(
             'program_directives',
-            'program : formula DIRECTIVE_BLOCK',
-            lambda formula, block: PROGRAM_DIRECTIVES.bind(formula, block),
+            'program : pipeline DIRECTIVE_BLOCK',
+            lambda pipeline, block: PROGRAM_DIRECTIVES.bind(pipeline, block),
         ),
         ProductionRule(
             'frame_directives',
@@ -163,6 +164,38 @@ class DirectiveComponent(GrammarComponent):
             lambda _, formula, block, __: FRAME_DIRECTIVES.bind(
                 formula, block
             ),
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class PipelineComponent(GrammarComponent):
+    """Component for the multi-level pipeline ``>>`` (spec §4.4).
+
+    ``STAGE_PIPE (>>)`` connects frames/formulae into a graph of stages
+    (BIDS-SM ``Nodes`` + ``Edges``). A single-stage pipeline is just a formula;
+    a multi-stage pipeline is an associative ``PIPELINE`` of stages. The
+    trailing directive block (handled by ``program``) is graph-level."""
+
+    tokens: Tuple[Token, ...] = (
+        Token(
+            'STAGE_PIPE',
+            r'\>\>',
+            precedence=from_sequence,
+            category='STRUCTURE',
+        ),
+    )
+
+    production_rules: Tuple[ProductionRule, ...] = (
+        ProductionRule(
+            'pipeline_one',
+            'pipeline : formula',
+            unit_lift(),
+        ),
+        ProductionRule(
+            'pipeline_seq',
+            'pipeline : pipeline STAGE_PIPE formula',
+            lambda left, _, right: PIPELINE.bind(left, right),
         ),
     )
 
@@ -187,5 +220,6 @@ class NwxGrammar(DynamicGrammar):
                 StructureComponent(),
                 RanefComponent(),
                 DirectiveComponent(),
+                PipelineComponent(),
             ),
         )

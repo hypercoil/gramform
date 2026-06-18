@@ -16,7 +16,7 @@ and bracketed frames ``[ ... ]`` reuse the Wilkinson grammar verbatim; only the
 guard is ported onto ``TermSpec``, and an nwx-aware intercept postprocessor
 (:func:`nwx_add_intercept`) descends past the directive wrappers. A trailing
 ``{{ ... }}`` directive block is captured by the grammar as a single
-``DIRECTIVE_BLOCK`` token (its text parsed by :mod:`directives`) and attaches by
+``DIRECTIVE_BLOCK`` token (text parsed by :mod:`directives`) and attaches by
 *position*: ``PROGRAM_DIRECTIVES`` (outermost node) or ``FRAME_DIRECTIVES``
 (inside a frame). No separate lexer state is needed -- the block is opaque to
 the term lexer, so the directive ``:`` / ``=`` never collide with the term
@@ -46,8 +46,10 @@ from gramform.core import (
 from gramform.grammars.nwx.directives import DirectiveSet, parse_directives
 from gramform.grammars.nwx.grammar import NwxGrammar
 from gramform.grammars.nwx.spec import (
+    Carry,
     Combine,
     Const,
+    Edge,
     FactorSpec,
     Level,
     Lookup,
@@ -102,6 +104,15 @@ class _Block:
     signal: tuple[TermSpec, ...] = ()  # signal() set on a `~|` RHS
 
 
+@dataclass(frozen=True)
+class _Pipeline:
+    """An interpreted ``>>`` pipeline: the stage nodes + dataflow edges, before
+    the final :class:`ModelGraph` (which adds any graph-level inference)."""
+
+    nodes: tuple[ModelNode, ...]
+    edges: tuple[Edge, ...]
+
+
 class NwxState(TypedState):
     """Typed result slot (``eval``) plus parse-wide accumulators. ``deps``
     collects frame sub-models (emitted as extra graph nodes); ``partial``
@@ -119,6 +130,7 @@ class NwxState(TypedState):
     signal: tuple[TermSpec, ...] = ()
     residualise_noise: tuple[TermSpec, ...] = ()
     in_residualise: bool = False
+    inbound_stage: str | None = None  # `.` on a stage LHS = this stage's cope
     directives: DirectiveSet | None = None
 
 
@@ -302,8 +314,16 @@ def VARIABLE_COMPLEMENT_impl(
     node: Primitive,
     context: NwxContext,
 ) -> NwxContext:
-    # `.` on a RHS is the complement set; resolved by the validator/engine
-    # later. Carried here as a plain lookup of the reserved name.
+    # `.` disambiguates by position (spec §8): on a downstream pipeline stage
+    # (``inbound_stage`` set) it is the inbound cope from the previous stage;
+    # otherwise it is the complement set (resolved by the validator/engine),
+    # carried here as a plain lookup of the reserved name.
+    inbound = context.state.inbound_stage
+    if inbound is not None:
+        referent = TermSpec(
+            (FactorSpec(Referent(stage=inbound, kind='cope')),)
+        )
+        return context.with_result((referent,))
     return context.with_result((TermSpec((FactorSpec(Lookup('.')),)),))
 
 
@@ -553,6 +573,97 @@ def _block_text(token: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# multi-level pipeline (>>)
+# ---------------------------------------------------------------------------
+
+
+def _build_stage_node(
+    stage_ast: Primitive,
+    name: str,
+    context: NwxContext,
+) -> tuple[ModelNode, NwxContext]:
+    """Build one pipeline-stage :class:`ModelNode` from its frame formula AST.
+
+    Unlike :func:`_push_frame`, a stage *is* a graph node (no ``_hat`` referent
+    is emitted into a parent design). A frame stage's brackets may carry
+    node-level directives; a bare stage formula carries none."""
+    directives: DirectiveSet | None = None
+    if (
+        isinstance(stage_ast, Primitive)
+        and stage_ast.name == 'FRAME_DIRECTIVES'
+    ):
+        inner, block = stage_ast.parameters
+        directives = parse_directives(_block_text(block))
+    elif isinstance(stage_ast, Primitive) and stage_ast.name == 'PUSH_FRAME':
+        inner = stage_ast.get_parameters()
+    else:
+        inner = stage_ast  # a bare (bracketless) stage formula
+    context = inner(context)
+    result = context.get_result()
+    if isinstance(result, _Block):
+        spec = _block_to_modelspec(result)
+    else:
+        spec = ModelSpec(
+            response=ResponseSpec(terms=()),
+            fixed=to_terms(_coerce(result)),
+        )
+    level, group_by, combine = Level.DATASET, (), Combine.FIXED
+    if directives is not None:
+        spec = _apply_directives(spec, directives)
+        _validate_residualise(spec.residualise)
+        level = directives.level or level
+        group_by = directives.group_by
+        combine = directives.combine or combine
+    node = ModelNode(
+        name=name,
+        level=level,
+        group_by=group_by,
+        combine=combine,
+        spec=spec,
+    )
+    return node, context
+
+
+def PIPELINE_impl(node: Primitive, context: NwxContext) -> NwxContext:
+    """Build the multi-level graph: one node per ``>>`` stage, with a dataflow
+    edge between consecutive stages carrying the upstream cope/varcope."""
+    stages = node.parameters
+    nodes: list[ModelNode] = []
+    edges: list[Edge] = []
+    prev: ModelNode | None = None
+    for i, stage_ast in enumerate(stages):
+        # A `.` on this stage's LHS is the inbound cope from the prior stage.
+        context = context.update_state(
+            inbound_stage=prev.name if prev is not None else None
+        )
+        assert isinstance(stage_ast, Primitive)
+        stage_node, context = _build_stage_node(
+            stage_ast, f'stage{i}', context
+        )
+        nodes.append(stage_node)
+        if prev is not None:
+            carry = Carry(
+                contrast=(
+                    prev.spec.estimands[0].name if prev.spec.estimands else ''
+                ),
+                quantities='cope_varcope',
+            )
+            edges.append(
+                Edge(
+                    source=prev.name,
+                    dest=stage_node.name,
+                    filter=(),
+                    carry=carry,
+                )
+            )
+        prev = stage_node
+    context = context.update_state(inbound_stage=None)
+    return context.with_result(
+        _Pipeline(nodes=tuple(nodes), edges=tuple(edges))
+    )
+
+
+# ---------------------------------------------------------------------------
 # model assembly
 # ---------------------------------------------------------------------------
 
@@ -633,6 +744,16 @@ def finalise_hook(context: NwxContext) -> NwxContext:
     result = context.get_result()
     directives = context.state.directives
     deps = context.state.deps
+    if isinstance(result, _Pipeline):
+        # A `>>` pipeline: the stage nodes + edges are the graph; a trailing
+        # `{{ ... }}` is graph-level (only its inference is graph-scoped, the
+        # rest already applied per stage).
+        graph = ModelGraph(
+            nodes=result.nodes + deps,
+            edges=result.edges,
+            inference=directives.inference if directives else None,
+        )
+        return context.with_result(graph)
     if isinstance(result, _Block):
         spec = _block_to_modelspec(result)
     else:
@@ -698,6 +819,7 @@ INTERPRETERS.register_operation(
 INTERPRETERS.register_operation(
     'build', 'PROGRAM_DIRECTIVES', PROGRAM_DIRECTIVES_impl
 )
+INTERPRETERS.register_operation('build', 'PIPELINE', PIPELINE_impl)
 
 # Register the disjoint feature-family interpreters into the shared ``spec``
 # group (spec §12). Imported here, after the dispatch + helpers above are
@@ -713,10 +835,14 @@ import gramform.grammars.nwx.transform_smooth  # noqa: E402, F401
 
 def _walk_intercept(tree: object, context: NwxContext) -> object:
     """Recurse, re-adding the implicit intercept to every nested formula (a
-    ``PUSH_FRAME`` / ``FRAME_DIRECTIVES`` sub-model), preserving the opaque
-    ``DIRECTIVE_BLOCK`` string operands."""
+    ``PUSH_FRAME`` / ``FRAME_DIRECTIVES`` sub-model, a ``PIPELINE`` stage),
+    preserving the opaque ``DIRECTIVE_BLOCK`` string operands."""
     if not isinstance(tree, Primitive) or tree.is_terminal:
         return tree
+    if tree.name == 'PIPELINE':
+        return tree.bind(
+            *[_stage_intercept(stage, context) for stage in tree.parameters]
+        )
     if tree.name == 'PUSH_FRAME':
         return tree.bind(_top_formula(tree.get_parameters(), context))
     if tree.name == 'FRAME_DIRECTIVES':
@@ -727,8 +853,22 @@ def _walk_intercept(tree: object, context: NwxContext) -> object:
     )
 
 
+def _stage_intercept(stage: object, context: NwxContext) -> object:
+    """A pipeline stage. A frame stage gets its intercept *inside* the frame
+    (so the stage AST shape is preserved for ``PIPELINE_impl`` to unwrap); a
+    bare stage formula gets the intercept added directly."""
+    if isinstance(stage, Primitive) and stage.name in (
+        'PUSH_FRAME',
+        'FRAME_DIRECTIVES',
+    ):
+        return _walk_intercept(stage, context)
+    return _top_formula(stage, context)
+
+
 def _top_formula(tree: object, context: NwxContext) -> object:
     """Add the intercept to a formula's RHS, then recurse into its factors."""
+    if isinstance(tree, Primitive) and tree.name == 'PIPELINE':
+        return _walk_intercept(tree, context)
     if isinstance(tree, Primitive):
         tree = add_intercept_to_formula(tree, context)[0]
     return _walk_intercept(tree, context)
