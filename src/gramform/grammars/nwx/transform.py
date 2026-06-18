@@ -30,7 +30,7 @@ import dataclasses
 import re
 import warnings
 from dataclasses import dataclass
-from typing import Iterable, Type
+from typing import Callable, Iterable, Type
 
 from gramform.core import (
     ExecutionContext,
@@ -57,6 +57,7 @@ from gramform.grammars.nwx.spec import (
     Referent,
     ResidualiseSpec,
     ResponseSpec,
+    SmoothSpec,
     TermSource,
     TermSpec,
 )
@@ -94,19 +95,21 @@ class _Block:
     residualise: bool = False
     partial: tuple[TermSpec, ...] = ()
     random: tuple[RandomEffectSpec, ...] = ()
+    smooth: tuple[SmoothSpec, ...] = ()
 
 
 class NwxState(TypedState):
     """Typed result slot (``eval``) plus parse-wide accumulators. ``deps``
     collects frame sub-models (emitted as extra graph nodes); ``partial``
     accumulates ``noise()`` in-model nuisance terms for the enclosing block;
-    ``random`` accumulates ``(...|g)`` random-effect specs for the enclosing
-    block; ``directives`` holds the parsed ``{{ ... }}`` block for the
-    finaliser."""
+    ``random`` accumulates ``(...|g)`` random-effect specs and ``smooth`` the
+    ``s()``/``te()``/... smooth specs for the enclosing block; ``directives``
+    holds the parsed ``{{ ... }}`` block for the finaliser."""
 
     deps: tuple[ModelNode, ...] = ()
     partial: tuple[TermSpec, ...] = ()
     random: tuple[RandomEffectSpec, ...] = ()
+    smooth: tuple[SmoothSpec, ...] = ()
     directives: DirectiveSet | None = None
 
 
@@ -359,6 +362,14 @@ def NESTED_impl(node: Primitive, context: NwxContext) -> NwxContext:
 #: residualisation-context ``noise()`` routing arrive in Phase 5.
 _PARTIAL_MARKERS = frozenset({'noise', 'nuisance'})
 
+#: Extra ``NAME(...)`` call handlers contributed by feature-family modules
+#: (smooths register ``s``/``te``/``ti``/``t2`` here at import). A handler takes
+#: the ``NAMED_FUNCTION`` node + context and returns a context whose result is
+#: the call's term contribution (``()`` when it routes to a non-fixed tuple).
+NAMED_FUNCTION_HANDLERS: dict[
+    str, Callable[[Primitive, 'NwxContext'], 'NwxContext']
+] = {}
+
 
 def NAMED_FUNCTION_impl(node: Primitive, context: NwxContext) -> NwxContext:
     name = node.parameters[0]
@@ -372,9 +383,12 @@ def NAMED_FUNCTION_impl(node: Primitive, context: NwxContext) -> NwxContext:
         terms = to_terms(_coerce(context.get_result()))
         context = context.update_state(partial=context.state.partial + terms)
         return context.with_result(())
-    # Smooths (`s`/`te`/...) and data-transform functions arrive in Phase 4.
+    handler = NAMED_FUNCTION_HANDLERS.get(name)
+    if handler is not None:
+        return handler(node, context)
+    # Data-transform functions (plain `bs`/`ns`/`poly`) arrive in a later phase.
     raise NotImplementedError(
-        f'function-call terms ({name}(...)) are not supported until Phase 4'
+        f'function-call terms ({name}(...)) are not supported yet'
     )
 
 
@@ -389,14 +403,21 @@ def LHS_RHS_STRUCTURE_impl(node: Primitive, context: NwxContext) -> NwxContext:
     lhs = to_terms(_coerce(context.get_result()))
     context = rhs_expr(context)
     rhs = to_terms(_coerce(context.get_result()))
-    # Consume any noise() partials and (...|g) random effects accumulated while
-    # evaluating this RHS, so they bind to this block and do not leak to an
-    # enclosing one.
+    # Consume any noise() partials, (...|g) random effects, and s()/te()/...
+    # smooths accumulated while evaluating this RHS, so they bind to this block
+    # and do not leak to an enclosing one.
     partial = context.state.partial
     random = context.state.random
-    context = context.update_state(partial=(), random=())
+    smooth = context.state.smooth
+    context = context.update_state(partial=(), random=(), smooth=())
     return context.with_result(
-        _Block(lhs=lhs, rhs=rhs, partial=partial, random=random)
+        _Block(
+            lhs=lhs,
+            rhs=rhs,
+            partial=partial,
+            random=random,
+            smooth=smooth,
+        )
     )
 
 
@@ -472,6 +493,7 @@ def _block_to_modelspec(block: _Block) -> ModelSpec:
         fixed=block.rhs,
         partial=block.partial,
         random=block.random,
+        smooth=block.smooth,
     )
 
 
@@ -513,6 +535,7 @@ def finalise_hook(context: NwxContext) -> NwxContext:
             fixed=to_terms(_coerce(result)),
             partial=context.state.partial,
             random=context.state.random,
+            smooth=context.state.smooth,
         )
     spec = _apply_directives(spec, directives)
     root = ModelNode(
@@ -562,6 +585,7 @@ INTERPRETERS.register_operation('build', 'PUSH_FRAME', PUSH_FRAME_impl)
 # defined, so the module-level registrations resolve their imports from this
 # module -- an intentional bottom import for its side effect.
 import gramform.grammars.nwx.transform_ranef  # noqa: E402, F401
+import gramform.grammars.nwx.transform_smooth  # noqa: E402, F401
 
 _DIRECTIVE_RE = re.compile(r'\{\{(.*?)\}\}\s*$', re.DOTALL)
 
