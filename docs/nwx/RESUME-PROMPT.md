@@ -115,6 +115,54 @@ though the engine imports `numpy`/`scipy`).
   nwx_reference_engine.example` (and `... -m pytest examples/nwx_reference_engine
   /tests`). The engine is NOT in the nox gate (it is a separate consumer).
 
+**Phase 4 is MOSTLY DONE and verified green (2026-06-18) — M2 reached
+functionally (GAM/GAMM formulae + full directives).** Three sub-commits:
+- **4a — GAM/GAMM smooths** (`grammars/nwx/transform_smooth.py`, new). `s`/`te`/
+  `ti`/`t2` (special only in call position, R6) lower onto `SmoothSpec`. They
+  reuse the existing parameterised `NAME(...)` productions — **no grammar
+  change** — via a new `NAMED_FUNCTION_HANDLERS` dispatch table in
+  `transform.py` that `transform_smooth` registers into. Smooths route out of
+  `fixed` into a new `NwxState.smooth` accumulator (same pattern as
+  `partial`/`random`) → `ModelSpec.smooth`. `bs=` → `BasisKind` (+cyclic for
+  `cc`/`cp`); default basis `tprs`(s)/`tensor`(te/ti/t2); k (default 10), m
+  (penalty_order), by, fx. `bs="re"/"fs"` GAMM bridge: 2nd positional arg →
+  `by`. `by_kind` is data-dependent → left `None` (engine resolves).
+  `BackendWarning` for non-shipped bases.
+- **4b — full directive set + error structures** (`directives.py`). Adds
+  `correlation=ar1(idx|grp)`→`ErrorSpec`, `weights=varIdent/varPower(arg)`→
+  heteroscedasticity, `se=robust(hc3)`/`se=cluster(by)`, and node-level
+  `level`/`group_by`/`combine` (→ the root `ModelNode`). `BackendWarning`s for
+  v3-gated kernels (non-core families/links, robust/cluster se, satterthwaite/
+  kr dof, correlation, weights). `BackendWarning` moved to `spec.py` (shared,
+  re-exported from `transform_ranef`) to avoid an import cycle.
+- **Verified: 210 passed / 1 xfailed; ruff + format clean; pyright 0 on nwx;
+  conflict gate = 0; coverage 75%; engine 27 passed.**
+
+**Phase-4 hard-won facts:**
+- Feature-family call handlers (smooths) register into a shared
+  `NAMED_FUNCTION_HANDLERS` dict in `transform.py`; `NAMED_FUNCTION_impl`
+  consults it before raising. Keeps `transform.py` from importing the
+  feature-family modules (they bottom-import-register, like the ranef ops).
+- The smooth-call AST is `(name, first_expr, [params_node], OperationalLevel)`
+  — drop the name and the trailing level marker (`parameters[1:-1]`); the
+  optional params node is `FUNCTION_PARAMETERS`/`PARAMETER`/`NAMED_PARAMETER`.
+  String-literal param values arrive as bare `core.Literal` (quotes included →
+  strip); numeric values as `NUMERIC_LITERAL` primitives.
+- `by_kind` (factor vs continuous) genuinely cannot be set at parse time (nwx
+  is data-free) — leave `None`; the engine/validator resolves it (the §8
+  "factor by= without main effect" warning is a Phase-7 validate.py check).
+
+**STILL TODO in Phase 4 — the exclusive-state `{{ }}` lexer grammar.** The
+directive *content* is fully parsed (above), but via the **Phase-1 textual
+trailing-block split** (`_split_directives`/`_DIRECTIVE_RE` in `transform.py`),
+NOT yet the integrated **exclusive `spec` lexer state** the plan/§4.5 call for.
+That rework (a `DirectiveComponent` with `('spec','exclusive')`, real
+productions, bracket-scoped placement: node-level inside `[]`, graph-level after
+`>>`) is **deferred to land with Phase 5**, where its scoping payoff (frame /
+multi-level directive attachment) is actually exercised — the textual split
+already delivers full single-node directives, so the rework is low-value until
+`>>` exists. The conflict gate stays load-bearing when it lands.
+
 **Phase 3 is DONE and verified green (2026-06-18) — first grammar EXTENSION.**
 Random effects (lme4 bar-in-parens) now parse and emit `RandomEffectSpec`.
 - `grammars/nwx/grammar.py` (NEW) — `RanefComponent` adds the token
@@ -264,60 +312,54 @@ If the venv ever breaks, rebuild it **only on /scratch**:
 `uv pip install --python /scratch/gramform-venv/bin/python ply wadler-lindig pydantic formulaic narwhals numpy pandas pytest pytest-cov "coverage[toml]" ruff pyright`
 (set `UV_CACHE_DIR`/`UV_PYTHON_INSTALL_DIR`/`TMPDIR` to `/scratch/...` first).
 
-## YOUR NEXT TASK — Phase 4: smooths + full directive block + error structures
+## YOUR NEXT TASK — Phase 5: residualise modes + multi-level graph (+ the
+## deferred exclusive-state `{{ }}` lexer grammar)
 
-Goal: GAM/GAMM smooths (`s/te/ti/t2`), the FULL directive block in an
-**exclusive `spec` lexer state**, and error/correlation structures. **M–L**
-sized. Like Phase 3, this EXTENDS the grammar (a `DirectiveComponent` with the
-exclusive state), so the **parser-conflict gate stays load-bearing** — re-assert
-`NwxGrammar().conflicts == ()` after the merge. Phases 4 and 6 are parallelisable
-with each other on disjoint `transform_*`/`covariate` files.
+Phase 4's GAM/GAMM smooths + full directives + error structures are DONE (M2).
+Two threads remain before Phase 7; do them together because they share the
+grammar surgery and the conflict gate:
 
-**Files (see `implementation-plan.md` Phase 4 + spec §4.3, §4.5):**
-- **`grammars/nwx/transform_smooth.py`** (new, disjoint file) — `s/te/ti/t2`
-  (special ONLY in call position; a bare `s` stays a lookup, R6) →
-  `SmoothSpec` (k, penalty_order, by + `by_kind` factor/continuous, cyclic,
-  tensor, fx, bounds). `bs="cr"/"ps"/...` string → `BasisKind`; `bs="re"/"fs"`
-  with a slope var → `by` (GAMM bridge). Plain `bs`/`ns`/`poly` stay `PyExpr`
-  data-transforms (NOT smooths). These reuse the existing
-  `NAMED_FUNCTION`/parameterised-call productions — `NAMED_FUNCTION_impl` in
-  `transform.py` currently raises `NotImplementedError` on non-`noise()` names;
-  route `s/te/ti/t2` to a smooth accumulator (mirror the `partial`/`random`
-  pattern → `ModelSpec.smooth`).
-- **`grammars/nwx/grammar.py`** (extend) — `DirectiveComponent` with an
-  **EXCLUSIVE** `spec` state (entered on `{{`, exited on `}}`) defining its own
-  `;`/`=`/`:`/`,`/`(`/`)`/name/number/string tokens, so the directive `:`
-  (contrasts) and `=` (key=val) do NOT collide with the default-state
-  `INTERACTION_ONLY (:)`/`ASSIGN (=)`. (`minimaltest`'s `param` state is the
-  pattern but it is *inclusive* — make `nwx`'s **exclusive**.) This RETIRES the
-  Phase-1 textual `{{...}}` split in `transform.py` (`_split_directives` /
-  `_DIRECTIVE_RE`) in favour of real productions.
-- **`directives.py`** (extend to the full key set) → `FamilySpec` /
-  `EstimationSpec` / `ErrorSpec` / `InferenceSpec` / `ContrastSpec`;
-  `correlation=ar1(time|g)` → `ErrorSpec`. Backend-awareness `BackendWarning`s
-  (reuse the Phase-3 class) for v3-gated kernels (families beyond 3, error
-  structures, dof, robust se).
+**(1) The deferred exclusive-state directive grammar (Phase-4 carryover).**
+`grammars/nwx/grammar.py` gains a `DirectiveComponent` with an **EXCLUSIVE**
+`spec` state (`('spec','exclusive')`, entered on `{{`, exited on `}}`) defining
+its own `;`/`=`/`:`/`,`/`(`/`)`/name/number/string tokens so the directive `:`
+(contrasts) and `=` (key=val) do NOT collide with the default-state
+`INTERACTION_ONLY (:)`/`ASSIGN (=)`. (`minimaltest`'s `param` state is the
+pattern but *inclusive* — make `nwx`'s **exclusive**.) Real productions attach
+`directives_opt` to `node` / `frame` (§4.5 scoping: node-level inside `[]`,
+graph-level after `>>`). This RETIRES the Phase-1 textual split in
+`transform.py` (`_split_directives` / `_DIRECTIVE_RE`); the lowering reuses the
+existing `directives.parse_directives` content layer (or new interpreter ops).
+**Re-assert `NwxGrammar().conflicts == ()`** + exclusive-state isolation tests
+(a directive `:`/`=` must not leak into the term algebra and vice-versa).
 
-**Tests:** smooth param mapping incl. `by_kind`, cyclic `bounds`, `bs="re"`
-slope→`by`; `s(age, by=dx)` without the `dx` main effect → WARNING; the
-directive-scoping matrix (node vs graph); **exclusive-state isolation of `:`/`=`**
-(a directive `:`/`=` must not leak into the term algebra and vice-versa);
-longest-match lexer tests; re-assert the conflict gate. **`y ~ s` (bare lookup)
-vs `y ~ s(x)` (smooth)** pins R6.
+**(2) Residualisation modes + multi-level (`implementation-plan.md` Phase 5).**
+`transform_struct.py` + `grammar.py` (`PipelineComponent`). `~|` →
+`ResidualiseSpec(AGGRESSIVE)` by default; `{{ residualise=nonaggressive }}`
+flips mode and **requires** a `signal()` set (hard error otherwise).
+`signal()/noise()` (call-position) route terms into `ResidualiseSpec.signal/
+.noise`; `noise()` on a *normal* RHS already routes to `ModelSpec.partial`
+(Phase 2). Multi-level: token `STAGE_PIPE (>>)`; a `node_seq` top rule builds
+a `ModelGraph` with `Edge`s; `Edge.carry` binds an upstream `ContrastSpec` name
++ `{cope,varcope}`; `.`-on-stage-LHS = inbound cope (disambiguate from
+complement by position). M3 (residualisation + multi-level) is the end of P5.
 
-> Phase 5 (residualise modes + multi-level `>>`) depends on Phase 4 (directive
-> `level`/`combine`) + the residualise primitive. Phase 6 (covariate→term
-> lowering, disjoint `covariate.py`) parallels 4. Phase 7 (validate.py + BIDS-SM
-> importer) is last. The reference engine extends in lockstep as kernels are
-> surfaced (smooths → `gam_fit`; random effects → `lme_fit` structure-dispatch,
-> nitrix v3 §1.1 — currently the Phase-2 engine rejects populated `random`).
+> Phase 6 (covariate→term lowering, disjoint `covariate.py`) is independent and
+> can interleave. Phase 7 (validate.py + BIDS-SM importer) is last; it also
+> owns the §8 checks deferred from earlier phases (smooth factor-`by=` without
+> its main effect; RE well-formedness; directive scoping). The reference engine
+> extends in lockstep as kernels are surfaced (smooths → `gam_fit`; random
+> effects → `lme_fit`; non-aggressive → `partial_residualise`; FLAME chaining).
 
 ## Roadmap (phases 1–7) & milestones
 
 ```
 Phase 0 ✅ ─▶ 1 ✅ ─▶ 2 ✅ (runnable slice) ─┬─▶ 3 ✅ (random effects) ─┐
-                                            ├─▶ 4 (smooths+directives)─┼─▶ 5 ─▶ 7
-                                            └─▶ 6 (covariate prog) ────┘
+                                            ├─▶ 4 ~✅ (smooths+directives;┼▶ 5 ▶ 7
+                                            │     {{}} lexer -> P5)       │
+                                            └─▶ 6 (covariate prog) ───────┘
+  (4~✅ = GAM/GAMM smooths + full directives + error structures done; the
+   exclusive-state {{}} lexer grammar is folded into Phase 5.)
 ```
 - **M1** (end P2): nwx usable, formula→corrected stat-map via the external
   reference engine. **M2** (end P4): GAM/GLMM formulae + full directives.
