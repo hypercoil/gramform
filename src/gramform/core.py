@@ -6,9 +6,10 @@
 ~~~~~~~~~~
 Core components of the `gramform` library for building simple DSLs.
 """
+
 import dataclasses
 import re
-from collections import namedtuple
+from enum import Enum, auto
 from functools import lru_cache
 from typing import (
     Any,
@@ -20,7 +21,6 @@ from typing import (
     Tuple,
     Type,
 )
-from enum import Enum, auto
 
 import ply.lex as lex
 import ply.yacc as yacc
@@ -55,7 +55,7 @@ def precedence_from_sequence(
         before: str | None = None,
     ) -> int:
         if before is None and after is None:
-            raise ValueError("Either before or after must be provided")
+            raise ValueError('Either before or after must be provided')
         before_index, after_index = before_index_default, after_index_default
         if before is not None:
             before_index = from_sequence(before)
@@ -63,9 +63,9 @@ def precedence_from_sequence(
             after_index = from_sequence(after)
         if after_index < before_index:
             raise ValueError(
-                f"Precedence after {after} and before {before} is not "
-                f"satisfiable because {after} has a lower precedence than "
-                f"{before}."
+                f'Precedence after {after} and before {before} is not '
+                f'satisfiable because {after} has a lower precedence than '
+                f'{before}.'
             )
         precedence[token] = (after_index + before_index) / 2
         return from_sequence(token)
@@ -77,6 +77,7 @@ def push_state_and_return(state: str):
     def _inner(t, grammar):
         t.lexer.push_state(state)
         return t
+
     return _inner
 
 
@@ -92,15 +93,17 @@ def literal(dtype: Type, cast: callable = None):
     Pattern:
     construct : LITERAL
     """
+
     def _inner(value):
         _cast = cast or dtype
         return Literal.create(_cast(value), dtype)
+
     return _inner
 
 
 def lift_literal(
     dtype: Type,
-    prim: "Primitive",
+    prim: 'Primitive',
     cast: callable = None,
 ):
     """
@@ -109,69 +112,81 @@ def lift_literal(
     Pattern:
     construct : LITERAL
     """
+
     def _inner(value):
         _cast = cast or dtype
         return prim.bind(Literal.create(_cast(value), dtype))
+
     return _inner
 
 
-def unop_prefix(prim: "Primitive", *pparams):
+def unop_prefix(prim: 'Primitive', *pparams):
     """
     A production rule pattern frequently used for unary prefix operations.
 
     Pattern:
     construct : OPERATOR construct
     """
+
     def _inner(_, right):
         return prim.bind(right, *pparams)
+
     return _inner
 
 
-def unop_postfix(prim: "Primitive", *pparams):
+def unop_postfix(prim: 'Primitive', *pparams):
     """
     A production rule pattern frequently used for unary postfix operations.
 
     Pattern:
     construct : construct OPERATOR
     """
+
     def _inner(left, _):
         return prim.bind(left, *pparams)
+
     return _inner
 
 
-def binop_infix(prim: "Primitive", *pparams):
+def binop_infix(prim: 'Primitive', *pparams):
     """
     A production rule pattern frequently used for binary infix operations.
 
     Pattern:
     construct : construct_left OPERATOR construct_right
     """
+
     def _inner(left, _, right):
         return prim.bind(left, right, *pparams)
+
     return _inner
 
 
-def binop_prefix(prim: "Primitive", *pparams):
+def binop_prefix(prim: 'Primitive', *pparams):
     """
     A production rule pattern frequently used for binary prefix operations.
 
     Pattern:
     construct : OPERATOR construct_left construct_right
     """
+
     def _inner(_, left, right):
         return prim.bind(left, right, *pparams)
+
     return _inner
 
 
-def binop_postfix(prim: "Primitive", *pparams):
+def binop_postfix(prim: 'Primitive', *pparams):
     """
     A production rule pattern frequently used for binary postfix operations.
 
     Pattern:
     construct : construct_left construct_right OPERATOR
     """
+
     def _inner(left, right, _):
         return prim.bind(left, right, *pparams)
+
     return _inner
 
 
@@ -182,20 +197,24 @@ def enter_group():
     Pattern:
     construct : LPAREN construct RPAREN
     """
+
     def _inner(_, inner, __):
         return inner
+
     return _inner
 
 
-def circumfix(prim: "Primitive", *pparams):
+def circumfix(prim: 'Primitive', *pparams):
     """
     A production rule pattern used for circumfix operations.
 
     Pattern:
     construct : LPAREN construct RPAREN
     """
+
     def _inner(_, inner, __):
         return prim.bind(inner, *pparams)
+
     return _inner
 
 
@@ -207,56 +226,66 @@ def unit_lift():
     Pattern:
     construct : construct
     """
+
     def _inner(inner):
         return inner
+
     return _inner
 
 
-def named_function_call(prim: "Primitive", *pparams):
+def named_function_call(prim: 'Primitive', *pparams):
     """
     A production rule pattern frequently used for function calls.
 
     Pattern:
     construct : NAME LPAREN construct RPAREN
     """
+
     def _inner(_, __, expr, ___):
         return prim.bind(expr, *pparams)
+
     return _inner
 
 
-def parameterised_named_function_call(prim: "Primitive", *pparams):
+def parameterised_named_function_call(prim: 'Primitive', *pparams):
     """
     A production rule pattern frequently used for function calls.
 
     Pattern:
     construct : NAME LPAREN construct parameters RPAREN
     """
+
     def _inner(_, __, expr, parameters, ___):
         return prim.bind(expr, parameters, *pparams)
+
     return _inner
 
 
-def named_function_bind(prim: "Primitive", *pparams):
+def named_function_bind(prim: 'Primitive', *pparams):
     """
     A production rule pattern frequently used for function calls.
 
     Pattern:
     construct : name LPAREN construct RPAREN
     """
+
     def _inner(name, _, expr, __):
         return prim.bind(name, expr, *pparams)
+
     return _inner
 
 
-def parameterised_named_function_bind(prim: "Primitive", *pparams):
+def parameterised_named_function_bind(prim: 'Primitive', *pparams):
     """
     A production rule pattern frequently used for function calls.
 
     Pattern:
     construct : name LPAREN construct parameters RPAREN
     """
+
     def _inner(name, _, expr, parameters, __):
         return prim.bind(name, expr, parameters, *pparams)
+
     return _inner
 
 
@@ -273,6 +302,7 @@ def config_primitives():
         A registry of primitives.
     """
     registry = {}
+
     def _inner(
         name: str,
         parameters: Tuple[Any, ...] = (),
@@ -280,7 +310,7 @@ def config_primitives():
         is_terminal: bool = False,
     ):
         if name in registry:
-            raise ValueError(f"Primitive {name} already registered")
+            raise ValueError(f'Primitive {name} already registered')
         prim = Primitive(
             name=name,
             parameters=parameters,
@@ -289,6 +319,7 @@ def config_primitives():
         )
         registry[name] = prim
         return prim
+
     _inner.__doc__ = Primitive.__doc__
     _inner.__name__ = Primitive.__name__
     return _inner, registry
@@ -297,9 +328,7 @@ def config_primitives():
 @dataclasses.dataclass(frozen=True)
 class Primitive:
     name: str
-    parameters: Tuple[Any, ...] = dataclasses.field(
-        default_factory=tuple
-    )
+    parameters: Tuple[Any, ...] = dataclasses.field(default_factory=tuple)
     # Used for operator flattening when postprocessing the tree.
     is_associative: bool = False
     is_terminal: bool = dataclasses.field(default=False, repr=False)
@@ -322,14 +351,14 @@ class Primitive:
 
     @property
     def value(self) -> Any:
-        #TODO: Handle multiple levels of wrapping
+        # TODO: Handle multiple levels of wrapping
         param = self.parameters[0]
         if (len(self.parameters) == 1) and isinstance(param, Literal):
             return param.value
         else:
             raise ValueError(
-                f"Method `value` is not supported on "
-                f"non-literal wrapping primitive {self.name}"
+                f'Method `value` is not supported on '
+                f'non-literal wrapping primitive {self.name}'
             )
 
     def __repr__(self):
@@ -342,9 +371,9 @@ class Primitive:
         return hash((self.name, self.parameters))
 
     def __call__(self, context):
-        cache_hit = context.subcontexts.get(
-            'cache', {}
-        ).get(self, NotInCache())
+        cache_hit = context.subcontexts.get('cache', {}).get(
+            self, NotInCache()
+        )
         match cache_hit:
             case NotInCache():
                 result = context.interpreter[self.name](self, context)
@@ -405,12 +434,14 @@ class Literal:
 @dataclasses.dataclass(frozen=True)
 class NotEvaluated:
     """Sentinel value for unevaluated primitives."""
+
     pass
 
 
 @dataclasses.dataclass(frozen=True)
 class NotInCache:
     """Sentinel value for primitives not in the cache."""
+
     pass
 
 
@@ -479,6 +510,7 @@ class ProductionRule:
     implementation: callable
         The actual implementation function.
     """
+
     name: str
     rule: str
     implementation: callable
@@ -495,8 +527,10 @@ class ProductionRule:
 
     def materialise(self, grammar: 'DynamicGrammar') -> callable:
         """Create a PLY-compatible production function."""
+
         def production_func(p):
             p[0] = self.implementation(*p[1:])
+
         name = f'p_{self.name}'
         production_func.__name__ = name
         production_func.__doc__ = self.rule
@@ -505,6 +539,7 @@ class ProductionRule:
 
 class Associativity(Enum):
     """Associativity of operators."""
+
     LEFT = auto()
     RIGHT = auto()
     NONE = auto()  # For non-operator tokens
@@ -532,26 +567,27 @@ class Namespaces:
         The name of the default namespace for tokens that don't specify
         a namespace explicitly.
     """
+
     namespaces: Dict[str, Dict[str, str]] = dataclasses.field(
         default_factory=dict
     )
-    default_namespace: str = "default"
+    default_namespace: str = 'default'
 
     def __post_init__(self):
         """Validate the namespaces."""
         if not isinstance(self.namespaces, dict):
-            raise ValueError("Namespaces must be a dictionary")
-        
+            raise ValueError('Namespaces must be a dictionary')
+
         for namespace_name, namespace_mapping in self.namespaces.items():
             if not isinstance(namespace_name, str):
-                raise ValueError("Namespace names must be strings")
+                raise ValueError('Namespace names must be strings')
             if not isinstance(namespace_mapping, dict):
-                raise ValueError("Namespace mappings must be dictionaries")
+                raise ValueError('Namespace mappings must be dictionaries')
             for regex, token_name in namespace_mapping.items():
                 if not isinstance(regex, str):
-                    raise ValueError("Regex patterns must be strings")
+                    raise ValueError('Regex patterns must be strings')
                 if not isinstance(token_name, str):
-                    raise ValueError("Token names must be strings")
+                    raise ValueError('Token names must be strings')
 
     def add_token(
         self,
@@ -581,7 +617,7 @@ class Namespaces:
             new_namespaces[namespace] = {}
         new_namespaces[namespace] = {
             **new_namespaces[namespace],
-            regex: token_name
+            regex: token_name,
         }
         self.namespaces = new_namespaces
         return self
@@ -648,7 +684,7 @@ class Namespaces:
                 # Merge the mappings, with other taking precedence on conflicts
                 merged_namespaces[namespace_name] = {
                     **merged_namespaces[namespace_name],
-                    **namespace_mapping
+                    **namespace_mapping,
                 }
             else:
                 merged_namespaces[namespace_name] = namespace_mapping
@@ -709,6 +745,7 @@ class Token:
     category: Optional[str]
         An optional category for error context matching.
     """
+
     name: str
     regex: str
     function: Optional[callable] = None
@@ -721,13 +758,13 @@ class Token:
     def __post_init__(self):
         """Validate the token."""
         if not self.name:
-            raise ValueError("Token name cannot be empty")
+            raise ValueError('Token name cannot be empty')
         if not self.regex:
-            raise ValueError("Token regex cannot be empty")
+            raise ValueError('Token regex cannot be empty')
         if self.function and not callable(self.function):
-            raise ValueError("Token function must be callable")
+            raise ValueError('Token function must be callable')
         if self.state and not isinstance(self.state, str):
-            raise ValueError("Token state must be a string")
+            raise ValueError('Token state must be a string')
         if isinstance(self.precedence, Mapping):
             object.__setattr__(
                 self,
@@ -742,15 +779,14 @@ class Token:
             )
         if not isinstance(self.precedence, int):
             raise ValueError(
-                "Token precedence must be an integer, a callable, "
-                "or a mapping"
+                'Token precedence must be an integer, a callable, or a mapping'
             )
         if not isinstance(self.associativity, Associativity):
             raise ValueError(
-                "Token associativity must be an Associativity enum"
+                'Token associativity must be an Associativity enum'
             )
         if self.namespace is not None and not isinstance(self.namespace, str):
-            raise ValueError("Token namespace must be a string or None")
+            raise ValueError('Token namespace must be a string or None')
 
     def generate_example(self) -> str:
         """
@@ -803,6 +839,7 @@ class GrammarComponent:
     production_rules: Tuple[ProductionRule, ...]
         The production rules in the component.
     """
+
     tokens: Tuple[Token, ...] = dataclasses.field(default_factory=tuple)
     states: Tuple[Tuple[str, str], ...] = dataclasses.field(
         default_factory=tuple,
@@ -816,23 +853,24 @@ class GrammarComponent:
         """Validate the component's attributes."""
         # Validate tokens
         if not all(isinstance(t, Token) for t in self.tokens):
-            raise ValueError("All tokens must be Token instances")
+            raise ValueError('All tokens must be Token instances')
 
         # Validate states
         if not all(
-            isinstance(s, tuple) and len(s) == 2 and
-            isinstance(s[0], str) and isinstance(s[1], str)
+            isinstance(s, tuple)
+            and len(s) == 2
+            and isinstance(s[0], str)
+            and isinstance(s[1], str)
             for s in self.states
         ):
-            raise ValueError("States must be tuples of (str, str)")
+            raise ValueError('States must be tuples of (str, str)')
 
         # Validate production rules
         if not all(
-            isinstance(rule, ProductionRule)
-            for rule in self.production_rules
+            isinstance(rule, ProductionRule) for rule in self.production_rules
         ):
             raise ValueError(
-                "All production rules must be ProductionRule instances"
+                'All production rules must be ProductionRule instances'
             )
 
     def __repr__(self):
@@ -841,50 +879,48 @@ class GrammarComponent:
     def build(self) -> 'GrammarComponent':
         """Build the component, making it ready for use in a grammar."""
         if self._is_built:
-            raise ValueError("Component is already built")
+            raise ValueError('Component is already built')
 
         return dataclasses.replace(self, _is_built=True)
 
     def merge(self, other: 'GrammarComponent') -> 'GrammarComponent':
         """Merge this component with another, returning a new component."""
         if not self._is_built or not other._is_built:
-            raise ValueError("Both components must be built before merging")
+            raise ValueError('Both components must be built before merging')
 
         # Check for production rule conflicts
         self_rules = {rule.name for rule in self.production_rules}
         other_rules = {rule.name for rule in other.production_rules}
         conflicts = self_rules & other_rules
         if conflicts:
-            raise ValueError(f"Conflicting production rules: {conflicts}")
+            raise ValueError(f'Conflicting production rules: {conflicts}')
 
         # Check for token name conflicts
         self_tokens = {token.name for token in self.tokens}
         other_tokens = {token.name for token in other.tokens}
         conflicts = self_tokens & other_tokens
         if conflicts:
-            raise ValueError(f"Conflicting tokens: {conflicts}")
+            raise ValueError(f'Conflicting tokens: {conflicts}')
 
         # Check for namespace conflicts (same regex in different namespaces)
-        #TODO: If this is too slow, we can either refactor to use a more
+        # TODO: If this is too slow, we can either refactor to use a more
         #      efficient data structure, or allow unsafe/skipping the check.
         self_namespaces = {}
         for token in self.tokens:
-            namespace = token.namespace or token.state or "default"
+            namespace = token.namespace or token.state or 'default'
             if namespace not in self_namespaces:
                 self_namespaces[namespace] = {}
             self_namespaces[namespace][token.regex] = token.name
 
         other_namespaces = {}
         for token in other.tokens:
-            namespace = token.namespace or token.state or "default"
+            namespace = token.namespace or token.state or 'default'
             if namespace not in other_namespaces:
                 other_namespaces[namespace] = {}
             other_namespaces[namespace][token.regex] = token.name
 
         # Check for regex conflicts within the same namespace
-        for namespace in set(
-            self_namespaces.keys()
-        ) | set(
+        for namespace in set(self_namespaces.keys()) | set(
             other_namespaces.keys()
         ):
             self_regexes = set(self_namespaces.get(namespace, {}).keys())
@@ -920,9 +956,42 @@ class GrammarComponent:
         return self.merge(other)
 
 
+class _GrammarLogCapture:
+    """
+    Capture PLY ``yacc``/``lex`` construction messages.
+
+    Passed to ``yacc.yacc(errorlog=...)`` so that grammar-construction
+    warnings -- in particular shift/reduce and reduce/reduce conflict
+    summaries -- are recorded on the grammar rather than only printed to
+    stderr. :attr:`DynamicGrammar.conflicts` reads these back so that a
+    grammar's conflict-freedom can be asserted in tests (PLY exposes no
+    ``parser.conflicts`` attribute).
+    """
+
+    def __init__(self) -> None:
+        self.records: List[str] = []
+
+    def _record(self, msg, *args):
+        self.records.append(str(msg) % args if args else str(msg))
+
+    warning = _record
+    error = _record
+    critical = _record
+
+    def info(self, *args, **kwargs):
+        pass
+
+    def debug(self, *args, **kwargs):
+        pass
+
+    def conflicts(self) -> Tuple[str, ...]:
+        return tuple(r for r in self.records if 'conflict' in r.lower())
+
+
 @dataclasses.dataclass(frozen=True)
 class DynamicGrammar:
     """A grammar composed from multiple components."""
+
     components: Tuple[GrammarComponent, ...]
     start_symbol: str | None = dataclasses.field(
         default=None,
@@ -952,6 +1021,15 @@ class DynamicGrammar:
     )
     _namespaces: Optional[Namespaces] = dataclasses.field(
         default=None,
+        init=False,
+    )
+    _grammar_log: Optional[Any] = dataclasses.field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _conflicts: Tuple[str, ...] = dataclasses.field(
+        default=(),
         init=False,
     )
 
@@ -991,18 +1069,22 @@ class DynamicGrammar:
         precedence_rules = []
         for token in base.tokens:
             if token.associativity != Associativity.NONE:
-                precedence_rules.append((
+                precedence_rules.append(
                     (
-                        'left'
-                        if token.associativity == Associativity.LEFT
-                        else 'right'
-                    ),
-                    token.name,
-                ))
+                        (
+                            'left'
+                            if token.associativity == Associativity.LEFT
+                            else 'right'
+                        ),
+                        token.name,
+                    )
+                )
         # Sort by precedence level (earlier = tighter binding)
-        precedence_rules.sort(key=lambda x: next(
-            t.precedence for t in base.tokens if t.name == x[1]
-        ))
+        precedence_rules.sort(
+            key=lambda x: next(
+                t.precedence for t in base.tokens if t.name == x[1]
+            )
+        )
         object.__setattr__(self, 'precedence', tuple(precedence_rules))
 
         # Register production rules
@@ -1017,6 +1099,7 @@ class DynamicGrammar:
         try:
             import json
             import os
+
             if os.path.exists(self._example_cache_file):
                 with open(self._example_cache_file, 'r') as f:
                     cached_examples = json.load(f)
@@ -1075,12 +1158,20 @@ class DynamicGrammar:
         object.__setattr__(self, '_namespaces', namespaces)
 
         lexer = lex.lex(module=self)
-        parser = yacc.yacc(module=self)
+        grammar_log = _GrammarLogCapture()
+        parser = yacc.yacc(
+            module=self,
+            errorlog=grammar_log,
+            write_tables=False,
+            debug=False,
+        )
         lexer.grammar = self
         parser.grammar = self
         self.error_handler._set_parser(parser)
         object.__setattr__(self, '_lexer', lexer)
         object.__setattr__(self, '_parser', parser)
+        object.__setattr__(self, '_grammar_log', grammar_log)
+        object.__setattr__(self, '_conflicts', grammar_log.conflicts())
 
         # Mark as initialized
         object.__setattr__(self, '_is_initialized', True)
@@ -1101,6 +1192,15 @@ class DynamicGrammar:
     def namespaces(self) -> Namespaces:
         """Get the full namespaces collection."""
         return self._namespaces
+
+    @property
+    def conflicts(self) -> Tuple[str, ...]:
+        """
+        PLY shift/reduce and reduce/reduce conflict messages, if any.
+
+        Empty for a conflict-free grammar. Used by the parser-conflict gate.
+        """
+        return self._conflicts
 
     def input(self, data: str) -> Any:
         """Lex the input data."""
@@ -1129,6 +1229,7 @@ class DynamicGrammar:
 
 class Subcontext(BaseModel):
     """Base class for composable execution context features."""
+
     next: Optional['Subcontext'] = None
     previous: Optional['Subcontext'] = None
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -1144,6 +1245,7 @@ class Subcontext(BaseModel):
 
 class CacheSubcontext(Subcontext):
     """Cache functionality as a composable subcontext."""
+
     cache: Dict[str, Any] = Field(default_factory=dict)
 
     def get_cached(self, key: str) -> Optional[Any]:
@@ -1159,6 +1261,7 @@ class CacheSubcontext(Subcontext):
 
 class withCacheSubcontext:
     """Mixin for cache subcontext."""
+
     def __add_subcontext__(self):
         """Add cache subcontext to parent."""
         subcontexts = self.subcontexts
@@ -1188,6 +1291,7 @@ class withCacheSubcontext:
 
 class TypedState(BaseModel):
     """Type-safe context state with Pydantic validation."""
+
     eval: Optional[Any] = None
     _default_field: str = 'eval'
     model_config = ConfigDict(
@@ -1200,13 +1304,8 @@ class TypedState(BaseModel):
         if not pparams:
             pparams = (self._default_field,)
         print(self.__class__)
-        result = self.__class__(**{
-            key: getattr(self, key)
-            for key in pparams
-        })
-        state = self.__class__.model_validate(
-            self.model_dump(exclude=pparams)
-        )
+        result = self.__class__(**{key: getattr(self, key) for key in pparams})
+        state = self.__class__.model_validate(self.model_dump(exclude=pparams))
         print(result, state)
         return result, state
 
@@ -1222,17 +1321,18 @@ class TypedState(BaseModel):
 
 class UninitialisedState(TypedState):
     """Uninitialised state."""
+
     def pop(self, *pparams):
-        raise ValueError("State is not initialised")
+        raise ValueError('State is not initialised')
 
     def update(self, *pparams, **update):
-        raise ValueError("State is not initialised")
+        raise ValueError('State is not initialised')
 
 
 class ExecutionContext(BaseModel):
     __state__: Type[TypedState] = TypedState
     interpreter: Dict[str, Callable] = Field(
-        description="Mapping of operation names to callable implementations",
+        description='Mapping of operation names to callable implementations',
         default_factory=dict,
     )
     state: TypedState = Field(default_factory=UninitialisedState)
@@ -1296,12 +1396,12 @@ class ExecutionContext(BaseModel):
     ) -> 'ExecutionContext':
         """Add or update a subcontext with validation."""
         new_subcontexts = dict(self.subcontexts)
-        new_subcontexts[f"__subcontext_{name}"] = subcontext
+        new_subcontexts[f'__subcontext_{name}'] = subcontext
         return self.model_copy(update={'subcontexts': new_subcontexts})
 
     def get_subcontext(self, name: str) -> Optional[Subcontext]:
         """Get a subcontext by name."""
-        return self.subcontexts.get(f"__subcontext_{name}", None)
+        return self.subcontexts.get(f'__subcontext_{name}', None)
 
     def _inherit_interpreter(
         self,
@@ -1324,11 +1424,12 @@ class ExecutionContext(BaseModel):
 
     def pop(self) -> Tuple['ExecutionContext', 'ExecutionContext']:
         """Pop a frame from the stack."""
-        raise ValueError("Removal of the bottom frame is not allowed")
+        raise ValueError('Removal of the bottom frame is not allowed')
 
 
 class ContextFrameStack(BaseModel):
     """Stack of context frames."""
+
     frames: List[ExecutionContext] = Field(default_factory=list)
     frame_factory: Type[ExecutionContext] = ExecutionContext
 
@@ -1455,6 +1556,7 @@ class TransformProcessor:
     """
     Enhanced processor with built-in initialization and finalization support.
     """
+
     grammar: DynamicGrammar
     preprocessors: Tuple[Mapping[str, str] | callable, ...]
     postprocessors: Tuple[callable, ...]
@@ -1469,9 +1571,8 @@ class TransformProcessor:
     default_interpreter: str | None = None
 
     def __post_init__(self):
-        if (
-            hasattr(self.grammar, '__call__') and
-            not hasattr(self.grammar, 'components')
+        if hasattr(self.grammar, '__call__') and not hasattr(
+            self.grammar, 'components'
         ):
             object.__setattr__(self, 'grammar', self.grammar())
         object.__setattr__(self, 'postprocessors', tuple(self.postprocessors))
@@ -1482,10 +1583,9 @@ class TransformProcessor:
     def _preprocess(self, expr: str) -> str:
         for preprocessor in self.preprocessors:
             if isinstance(preprocessor, Mapping):
+                alternation = '|'.join(re.escape(key) for key in preprocessor)
                 expr = re.sub(
-                    rf'\b({"|".join(
-                        re.escape(key) for key in preprocessor
-                    )})',
+                    rf'\b({alternation})',
                     lambda m: preprocessor[m.group(0)],
                     expr,
                 )
@@ -1523,17 +1623,19 @@ class TransformProcessor:
 
     def register_initialisation(self, interpreter_name: str, hook: callable):
         """Register initialisation hook for an interpreter."""
-        object.__setattr__(self, 'initialisation_hooks', {
-            **self.initialisation_hooks,
-            interpreter_name: hook
-        })
+        object.__setattr__(
+            self,
+            'initialisation_hooks',
+            {**self.initialisation_hooks, interpreter_name: hook},
+        )
 
     def register_finalisation(self, interpreter_name: str, hook: callable):
         """Register finalisation hook for an interpreter."""
-        object.__setattr__(self, 'finalisation_hooks', {
-            **self.finalisation_hooks,
-            interpreter_name: hook
-        })
+        object.__setattr__(
+            self,
+            'finalisation_hooks',
+            {**self.finalisation_hooks, interpreter_name: hook},
+        )
 
     def transform(
         self,

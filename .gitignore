@@ -128,6 +128,11 @@ ENV/
 env.bak/
 venv.bak/
 
+# PLY generated parser artifacts + grammar-example cache
+parsetab.py
+parser.out
+.grammar_examples.json
+
 # Spyder project settings
 .spyderproject
 .spyproject

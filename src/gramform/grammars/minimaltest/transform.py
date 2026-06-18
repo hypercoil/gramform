@@ -6,6 +6,7 @@ Minimal grammar for testing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Transformations for the minimal test grammar.
 """
+
 import dataclasses
 import operator
 from functools import reduce
@@ -50,7 +51,7 @@ class DataFrameState(TypedState):
             nw.from_native(v)  # Try to wrap with narwhals
             return v
         except Exception:
-            raise ValueError("Expected a narwhals-compatible DataFrame")
+            raise ValueError('Expected a narwhals-compatible DataFrame')
 
 
 class DataFrameContext(
@@ -81,7 +82,7 @@ class DataFrameContext(
 def VARIABLE_impl(node, context):
     name, state = node.get_parameters(), context.state
     if name not in state.data:
-        raise ValueError(f"Variable {name} not found in data")
+        raise ValueError(f'Variable {name} not found in data')
     return context.with_selection(state.select + [name])
 
 
@@ -122,7 +123,7 @@ def POWER_impl(node, context):
     state, context = context.pop('eval', 'select')
     pow_order, pow_cols = state.eval, state.select
     if pow_cols:
-        raise ValueError("Power operation does not support column selection")
+        raise ValueError('Power operation does not support column selection')
     new_selection = []
     values = [nw.col(e) for e in selection]
     if not isinstance(pow_order, Iterable):
@@ -132,10 +133,9 @@ def POWER_impl(node, context):
             new_selection.extend(selection)
             continue
         new_columns = [f'{e}_power{pow}' for e in selection]
-        data = data.with_columns([
-            (arg ** pow).alias(col)
-            for col, arg in zip(new_columns, values)
-        ])
+        data = data.with_columns(
+            [(arg**pow).alias(col) for col, arg in zip(new_columns, values)]
+        )
         new_selection.extend(new_columns)
     context = context.update_state(data=data, select=new_selection)
     return context
@@ -149,7 +149,7 @@ def BACKDIFF_impl(node, context):
     order, order_cols = state.eval, state.select
     if order_cols:
         raise ValueError(
-            "Backdiff operation does not support column selection"
+            'Backdiff operation does not support column selection'
         )
     new_selection, result = [], {}
     values = [nw.col(e) for e in selection]
@@ -166,10 +166,12 @@ def BACKDIFF_impl(node, context):
             new_selection.extend(selection)
             continue
         new_columns = [f'{c}_derivative{ord}' for c in selection]
-        data = data.with_columns([
-            e.over(order_by='index').alias(col)
-            for e, col in zip(result[ord], new_columns)
-        ])
+        data = data.with_columns(
+            [
+                e.over(order_by='index').alias(col)
+                for e, col in zip(result[ord], new_columns)
+            ]
+        )
         new_selection.extend(new_columns)
     context = context.update_state(data=data, select=new_selection)
     return context
@@ -199,14 +201,13 @@ def BINOP_impl(node, context, op: callable, col_infix: str):
         for left_arg, right_arg in zip(left_args, right_args)
     ]
     new_columns = [
-        f"{lcol}_{col_infix}_{rcol}"
+        f'{lcol}_{col_infix}_{rcol}'
         for lcol in left_cols
         for rcol in right_cols
     ]
-    data = data.with_columns([
-        val.alias(col)
-        for val, col in zip(result, new_columns)
-    ])
+    data = data.with_columns(
+        [val.alias(col) for val, col in zip(result, new_columns)]
+    )
     # if data.isnull().any().any():
     #     raise ValueError("Result of binary operation contains NaN")
     return context.update_state(data=data, select=new_columns)
@@ -251,10 +252,9 @@ def NEGATION_impl(node, context):
     data = context.get_data()
     result = [~(nw.col(e)) for e in selection]
     col_names = [f'not_{c}' for c in selection]
-    data = data.with_columns([
-        val.alias(col)
-        for val, col in zip(result, col_names)
-    ])
+    data = data.with_columns(
+        [val.alias(col) for val, col in zip(result, col_names)]
+    )
     return context.update_state(data=data, select=col_names)
 
 
@@ -264,11 +264,10 @@ def UNION_REDUCE_impl(node, context):
     selection = state.select
     data = context.get_data()
     result = [reduce(operator.or_, (nw.col(e) for e in selection))]
-    col_names = [f"any_{'_or_'.join(selection)}"]
-    data = data.with_columns([
-        val.alias(col)
-        for val, col in zip(result, col_names)
-    ])
+    col_names = [f'any_{"_or_".join(selection)}']
+    data = data.with_columns(
+        [val.alias(col) for val, col in zip(result, col_names)]
+    )
     return context.update_state(data=data, select=col_names)
 
 
@@ -278,11 +277,10 @@ def INTERSECTION_REDUCE_impl(node, context):
     selection = state.select
     data = context.get_data()
     result = [reduce(operator.and_, (nw.col(e) for e in selection))]
-    col_names = [f"all_{'_and_'.join(selection)}"]
-    data = data.with_columns([
-        val.alias(col)
-        for val, col in zip(result, col_names)
-    ])
+    col_names = [f'all_{"_and_".join(selection)}']
+    data = data.with_columns(
+        [val.alias(col) for val, col in zip(result, col_names)]
+    )
     return context.update_state(data=data, select=col_names)
 
 
@@ -303,7 +301,7 @@ def init_hook(
     try:
         data = nw.from_native(data)
     except TypeError:
-        raise ValueError(f"Invalid input type: {type(data)}")
+        raise ValueError(f'Invalid input type: {type(data)}')
     if 'index' not in data:
         data = data.with_row_index()
     context = context.update_state(data=data)
@@ -329,17 +327,31 @@ INTERPRETERS.register_operation('__all__', 'VARIABLE', VARIABLE_impl)
 INTERPRETERS.register_operation('__all__', 'RANGE', RANGE_impl)
 INTERPRETERS.register_operation('__all__', 'ENUM', ENUM_impl)
 INTERPRETERS.register_operation('__all__', 'INDICATOR', INDICATOR_impl)
-INTERPRETERS.register_operation('__all__', 'CONDITION_EQUAL', CONDITION_EQUAL_impl)
-INTERPRETERS.register_operation('__all__', 'CONDITION_NOT_EQUAL', CONDITION_NOT_EQUAL_impl)
-INTERPRETERS.register_operation('__all__', 'CONDITION_GREATER', CONDITION_GREATER_impl)
-INTERPRETERS.register_operation('__all__', 'CONDITION_LESS', CONDITION_LESS_impl)
-INTERPRETERS.register_operation('__all__', 'CONDITION_GREATER_EQUAL', CONDITION_GREATER_EQUAL_impl)
-INTERPRETERS.register_operation('__all__', 'CONDITION_LESS_EQUAL', CONDITION_LESS_EQUAL_impl)
+INTERPRETERS.register_operation(
+    '__all__', 'CONDITION_EQUAL', CONDITION_EQUAL_impl
+)
+INTERPRETERS.register_operation(
+    '__all__', 'CONDITION_NOT_EQUAL', CONDITION_NOT_EQUAL_impl
+)
+INTERPRETERS.register_operation(
+    '__all__', 'CONDITION_GREATER', CONDITION_GREATER_impl
+)
+INTERPRETERS.register_operation(
+    '__all__', 'CONDITION_LESS', CONDITION_LESS_impl
+)
+INTERPRETERS.register_operation(
+    '__all__', 'CONDITION_GREATER_EQUAL', CONDITION_GREATER_EQUAL_impl
+)
+INTERPRETERS.register_operation(
+    '__all__', 'CONDITION_LESS_EQUAL', CONDITION_LESS_EQUAL_impl
+)
 INTERPRETERS.register_operation('__all__', 'UNION', UNION_impl)
 INTERPRETERS.register_operation('__all__', 'INTERSECTION', INTERSECTION_impl)
 INTERPRETERS.register_operation('__all__', 'NEGATION', NEGATION_impl)
 INTERPRETERS.register_operation('__all__', 'UNION_REDUCE', UNION_REDUCE_impl)
-INTERPRETERS.register_operation('__all__', 'INTERSECTION_REDUCE', INTERSECTION_REDUCE_impl)
+INTERPRETERS.register_operation(
+    '__all__', 'INTERSECTION_REDUCE', INTERSECTION_REDUCE_impl
+)
 
 
 def get_processor():

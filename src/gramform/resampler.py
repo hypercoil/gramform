@@ -19,26 +19,28 @@ This depends on C extensions in _sre, which are also presumably subject to
 change without notice; the potential difficulty of integrating these is the
 reason we're just using internal APIs here.
 """
-from re._parser import parse as parse_regex
-from re._parser import (
-    LITERAL,
-    SUBPATTERN,
-    BRANCH,
-    MAX_REPEAT,
-    IN,
-    RANGE,
-    NEGATE,
-    ANY,
-    AT,
-    CATEGORY,
-)
-from typing import List, Tuple
+
 import random
 import string
+from re._parser import (
+    ANY,
+    AT,
+    BRANCH,
+    CATEGORY,
+    IN,
+    LITERAL,
+    MAX_REPEAT,
+    NEGATE,
+    RANGE,
+    SUBPATTERN,
+)
+from re._parser import parse as parse_regex
+from typing import List, Tuple
 
 
 class RegexNode:
     """Base class for regex AST nodes."""
+
     def generate(self) -> str:
         raise NotImplementedError
 
@@ -56,7 +58,7 @@ class SubpatternNode(RegexNode):
         self.pattern = pattern
 
     def generate(self) -> str:
-        return "".join(generate_from_ast(self.pattern))
+        return ''.join(generate_from_ast(self.pattern))
 
 
 class BranchNode(RegexNode):
@@ -66,7 +68,7 @@ class BranchNode(RegexNode):
     def generate(self) -> str:
         # Randomly select one branch
         branch = random.choice(self.branches)
-        return "".join(generate_from_ast(branch))
+        return ''.join(generate_from_ast(branch))
 
 
 class MaxRepeatNode(RegexNode):
@@ -78,14 +80,14 @@ class MaxRepeatNode(RegexNode):
     def generate(self) -> str:
         # For *, +, ?, {n}, {n,}, {n,m}
         if self.min_repeat == 0 and self.max_repeat == 1:  # ?
-            return "".join(generate_from_ast(self.pattern))
+            return ''.join(generate_from_ast(self.pattern))
         elif self.min_repeat == 0 and self.max_repeat == -1:  # *
-            return "".join(generate_from_ast(self.pattern))
+            return ''.join(generate_from_ast(self.pattern))
         elif self.min_repeat == 1 and self.max_repeat == -1:  # +
-            return "".join(generate_from_ast(self.pattern))
+            return ''.join(generate_from_ast(self.pattern))
         else:  # {n} or {n,m}
             n = self.min_repeat
-            return "".join(generate_from_ast(self.pattern) * n)
+            return ''.join(generate_from_ast(self.pattern) * n)
 
 
 class InNode(RegexNode):
@@ -94,7 +96,7 @@ class InNode(RegexNode):
 
     def generate(self) -> str:
         if not self.items:
-            return ""
+            return ''
 
         # Handle character classes
         if len(self.items) == 1 and self.items[0][0] == NEGATE:
@@ -111,7 +113,7 @@ class InNode(RegexNode):
             for char in string.printable:
                 if char not in negated_chars:
                     return char
-            return " "  # Fallback
+            return ' '  # Fallback
         else:
             # Regular character class
             valid_chars = []
@@ -126,7 +128,7 @@ class InNode(RegexNode):
 
 class AnyNode(RegexNode):
     def generate(self) -> str:
-        return random.choice(string.printable.replace("\n", ""))
+        return random.choice(string.printable.replace('\n', ''))
 
 
 class CategoryNode(RegexNode):
@@ -137,16 +139,14 @@ class CategoryNode(RegexNode):
         if self.category == 4:  # \d
             return random.choice(string.digits)
         elif self.category == 2:  # \w
-            return random.choice(string.ascii_letters + string.digits + "_")
+            return random.choice(string.ascii_letters + string.digits + '_')
         elif self.category == 3:  # \s
             return random.choice(string.whitespace)
         else:
-            return " "  # Fallback
+            return ' '  # Fallback
 
 
 def generate_from_ast(ast: List[Tuple], depth=0) -> str:
-    indent = '  ' * depth
-    # print(f"{indent}AST: {ast}")
     result = []
     for node in ast:
         t = node[0]
@@ -156,17 +156,17 @@ def generate_from_ast(ast: List[Tuple], depth=0) -> str:
             result.append(chr(v))
         elif t == SUBPATTERN:
             # v = (groupnum, add_flags, del_flags, subpattern)
-            result.append(generate_from_ast(v[3], depth+1))
+            result.append(generate_from_ast(v[3], depth + 1))
         elif t == BRANCH:
             # v = (None, [branch1, branch2, ...])
             # Pick the first branch for determinism
-            result.append(generate_from_ast(v[1][0], depth+1))
+            result.append(generate_from_ast(v[1][0], depth + 1))
         elif t == MAX_REPEAT:
             # v = (min_repeat, max_repeat, subpattern)
             min_repeat, max_repeat, subpattern = v
             n = min_repeat if min_repeat > 0 else 1
             for _ in range(n):
-                result.append(generate_from_ast(subpattern, depth+1))
+                result.append(generate_from_ast(subpattern, depth + 1))
         elif t == IN:
             # v = list of (LITERAL, x) or (RANGE, (a, b)) or (NEGATE, None)
             if v and v[0][0] == NEGATE:
@@ -176,7 +176,7 @@ def generate_from_ast(ast: List[Tuple], depth=0) -> str:
                         negated.add(chr(item[1]))
                     elif item[0] == RANGE:
                         a, b = item[1]
-                        negated.update(chr(i) for i in range(a, b+1))
+                        negated.update(chr(i) for i in range(a, b + 1))
                 for c in string.printable:
                     if c not in negated and c != '\n':
                         result.append(c)
@@ -231,11 +231,11 @@ def generate_valid_completion(regex: str) -> str:
         If the regex pattern is invalid
     """
     if not regex:
-        return ""
+        return ''
 
     try:
         ast = parse_regex(regex)
         # print(f"Top-level AST for pattern '{regex}': {ast}")
         return generate_from_ast(ast)
     except Exception as e:
-        raise Exception(f"Invalid regex pattern: {str(e)}")
+        raise Exception(f'Invalid regex pattern: {str(e)}')

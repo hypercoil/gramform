@@ -10,10 +10,11 @@ This is a proof of concept---formulaic's parser already supports Wilkinson
 notation---but we use it as a composable component in an extended Wilkinson
 grammar.
 """
+
 import ast
 import warnings
 from functools import reduce, singledispatch
-from typing import Any, Dict, Iterable, NamedTuple, Tuple, Type
+from typing import Any, Dict, Iterable, Tuple, Type
 
 import formulaic
 from formulaic.parser.types import Factor, Term
@@ -24,21 +25,21 @@ from gramform.core import (
     ExecutionContext,
     InterpretersDispatch,
     Primitive,
-    TypedState,
     TransformProcessor,
+    TypedState,
     withCacheSubcontext,
 )
 from gramform.grammars.wilkinson.grammar import (
-    OperationalLevel,
-    WilkinsonGrammar,
-    NUMERIC_LITERAL,
     APPEND,
-    REMOVE,
-    UNARY_NEGATION,
     LHS_RHS_STRUCTURE,
+    NUMERIC_LITERAL,
+    PUSH_FRAME,
+    REMOVE,
     RESIDUAL_STRUCTURE,
     SUBPARTS_STRUCTURE,
-    PUSH_FRAME,
+    UNARY_NEGATION,
+    OperationalLevel,
+    WilkinsonGrammar,
     lift_literal,
 )
 from gramform.postprocessors import (
@@ -46,38 +47,33 @@ from gramform.postprocessors import (
     ppr_common_subexpression,
 )
 
-INTERPRETERS : InterpretersDispatch = InterpretersDispatch()
-ZERO : Term = Term(
-    factors=[Factor("0", eval_method=Factor.EvalMethod.LITERAL)],
+INTERPRETERS: InterpretersDispatch = InterpretersDispatch()
+ZERO: Term = Term(
+    factors=[Factor('0', eval_method=Factor.EvalMethod.LITERAL)],
 )
-ONE : Term = Term(
-    factors=[Factor("1", eval_method=Factor.EvalMethod.LITERAL)],
+ONE: Term = Term(
+    factors=[Factor('1', eval_method=Factor.EvalMethod.LITERAL)],
 )
 
 
 class InvalidPromotion(ValueError):
     """Exception raised when a promotion is invalid."""
+
     pass
 
 
 @singledispatch
 def to_term(arg: Iterable[Factor]) -> Term:
-    variables = [
-        f for f in arg
-        if f.eval_method != Factor.EvalMethod.LITERAL
-    ]
+    variables = [f for f in arg if f.eval_method != Factor.EvalMethod.LITERAL]
     # Collapse literals into a single factor
-    literals = [
-        f for f in arg
-        if f.eval_method == Factor.EvalMethod.LITERAL
-    ]
+    literals = [f for f in arg if f.eval_method == Factor.EvalMethod.LITERAL]
     if literals:
         literal = reduce(
             lambda x, y: x * y,
             [
-                float(f.expr) if '.' in f.expr
-                else int(f.expr)
-                for f in literals],
+                float(f.expr) if '.' in f.expr else int(f.expr)
+                for f in literals
+            ],
             1,
         )
         literals = [
@@ -85,33 +81,38 @@ def to_term(arg: Iterable[Factor]) -> Term:
         ]
     return Term(factors=(literals + variables))
 
+
 @to_term.register
 def _(arg: Factor) -> Term:
     return Term(factors=[arg])
+
 
 @to_term.register
 def _(arg: Term) -> Term:
     return arg
 
+
 @to_term.register
 def _(arg: dict) -> Term:
     raise InvalidPromotion(
-        f"Cannot promote a sequence of Terms to a Term: {arg}"
+        f'Cannot promote a sequence of Terms to a Term: {arg}'
     )
+
 
 @to_term.register
 def _(arg: Any) -> Term:
     raise InvalidPromotion(
-        f"Cannot promote an object of type {type(arg)} to a Term: {arg}"
+        f'Cannot promote an object of type {type(arg)} to a Term: {arg}'
     )
 
 
 @singledispatch
 def to_terms(arg: Any) -> Dict[Term, None]:
     raise InvalidPromotion(
-        f"Cannot promote an object of type {type(arg)} to a sequence of "
-        f"Terms: {arg}"
+        f'Cannot promote an object of type {type(arg)} to a sequence of '
+        f'Terms: {arg}'
     )
+
 
 @to_terms.register
 def _(arg: dict) -> Dict[Term, None]:
@@ -122,16 +123,14 @@ def _(arg: dict) -> Dict[Term, None]:
     to_remove = []
     for t in arg:
         literals = [
-            f for f in t.factors
-            if f.eval_method == Factor.EvalMethod.LITERAL
+            f for f in t.factors if f.eval_method == Factor.EvalMethod.LITERAL
         ]
         variables = [
-            f for f in t.factors
-            if f.eval_method != Factor.EvalMethod.LITERAL
+            f for f in t.factors if f.eval_method != Factor.EvalMethod.LITERAL
         ]
         variables = tuple(sorted(variables, key=lambda x: x.expr))
         scaled = scales.get(variables, None)
-        #TODO
+        # TODO
         # I think we're hitting this block more frequently than we need to.
         # We can worry about optimising this later. In practice the parse
         # time is very small compared to steps like model matrix
@@ -145,22 +144,22 @@ def _(arg: dict) -> Dict[Term, None]:
                 [
                     float(f.expr) if '.' in f.expr else int(f.expr)
                     for f in literals
-                ]
+                ],
             )
             if not variables and scale != 1:
                 # intercept term: we should only allow a scale of 1
                 warnings.warn(
-                    f"Constant term {t} was interpreted as a scale of "
-                    f"{scale}, but only an intercept constant (scale of 1) "
-                    f"is allowed. This term has been removed from the "
-                    "formula automatically."
+                    f'Constant term {t} was interpreted as a scale of '
+                    f'{scale}, but only an intercept constant (scale of 1) '
+                    f'is allowed. This term has been removed from the '
+                    'formula automatically.'
                 )
                 instances_to_remove = [t]
             elif scaled is not None:
                 raise InvalidPromotion(
-                    f"Attempting to scale term {Term(variables)} by {scale}, "
-                    f"but {Term(variables)} has already been scaled by "
-                    f"{scaled}"
+                    f'Attempting to scale term {Term(variables)} by {scale}, '
+                    f'but {Term(variables)} has already been scaled by '
+                    f'{scaled}'
                 )
             else:
                 scales[variables] = scale
@@ -182,13 +181,16 @@ def _(arg: dict) -> Dict[Term, None]:
         del arg[instance]
     return {t: None for t in arg}
 
+
 @to_terms.register
 def _(arg: Term) -> Dict[Term, None]:
     return {arg: None}
 
+
 @to_terms.register
 def _(arg: Factor) -> Dict[Term, None]:
     return {Term(factors=[arg]): None}
+
 
 @to_terms.register
 def _(arg: formulaic.SimpleFormula) -> Dict[Term, None]:
@@ -196,6 +198,7 @@ def _(arg: formulaic.SimpleFormula) -> Dict[Term, None]:
     # returning a sequence of Terms. But the only place this comes up,
     # we want to keep the SimpleFormula as is.
     return arg
+
 
 @to_terms.register
 def _(arg: Structured) -> Dict[Term, None]:
@@ -273,29 +276,24 @@ def remove_terms(
     remove = to_terms(remove)
     if ZERO in remove:
         del remove[ZERO]
-        orig[ONE] = None # Interpret removal of ZERO as addition of ONE
+        orig[ONE] = None  # Interpret removal of ZERO as addition of ONE
     result = {e: None for e in orig if e not in remove}
     return result
 
 
 def build_factor_seqs(
-    candidates: Iterable[Term] | Factor | Term
+    candidates: Iterable[Term] | Factor | Term,
 ) -> Dict[Tuple[Factor], None]:
     seqs = {}
     if isinstance(candidates, Iterable):
-        seqs.update(
-            dict.fromkeys(
-                tuple(e.factors)
-                for e in candidates
-            )
-        )
+        seqs.update(dict.fromkeys(tuple(e.factors) for e in candidates))
     elif isinstance(candidates, Term):
         candidates = tuple(candidates.factors)
         seqs[candidates] = None
     elif isinstance(candidates, Factor):
         seqs[(candidates,)] = None
     else:
-        raise ValueError(f"Unexpected child result: {candidates}")
+        raise ValueError(f'Unexpected child result: {candidates}')
     return seqs
 
 
@@ -329,14 +327,11 @@ def _add_dependencies(
     return context, result
 
 
-def _referent_terms(
-    dependencies: Structured,
-    suffix: str
-) -> Dict[Term, None]:
+def _referent_terms(dependencies: Structured, suffix: str) -> Dict[Term, None]:
     return {
         Term(
             Factor(
-                f"{f}{suffix}",
+                f'{f}{suffix}',
                 eval_method=Factor.EvalMethod.LOOKUP,
             )
             for f in e.factors
@@ -352,9 +347,9 @@ def VARIABLE_impl(
     """Handle variable nodes by creating a Factor for lookup."""
     name = node.get_parameters()
     factor = Factor(name, eval_method=Factor.EvalMethod.LOOKUP)
-    return context.set_operational_level(
-        OperationalLevel.FACTOR
-    ).with_result(factor)
+    return context.set_operational_level(OperationalLevel.FACTOR).with_result(
+        factor
+    )
 
 
 def NUMERIC_LITERAL_impl(
@@ -364,9 +359,9 @@ def NUMERIC_LITERAL_impl(
     """Handle literal nodes by creating a Factor for literal values."""
     lit = node.get_parameters()
     factor = Factor(str(lit.value), eval_method=Factor.EvalMethod.LITERAL)
-    return context.set_operational_level(
-        OperationalLevel.FACTOR
-    ).with_result(factor)
+    return context.set_operational_level(OperationalLevel.FACTOR).with_result(
+        factor
+    )
 
 
 def EXECUTE_impl(
@@ -377,9 +372,9 @@ def EXECUTE_impl(
     code = node.get_parameters()
     code = standardise_code(code)
     factor = Factor(code, eval_method=Factor.EvalMethod.PYTHON)
-    return context.set_operational_level(
-        OperationalLevel.FACTOR
-    ).with_result(factor)
+    return context.set_operational_level(OperationalLevel.FACTOR).with_result(
+        factor
+    )
 
 
 def VARIABLE_COMPLEMENT_impl(
@@ -388,9 +383,9 @@ def VARIABLE_COMPLEMENT_impl(
 ) -> WilkinsonContext:
     """Handle variable complement nodes by creating a Factor for lookup."""
     term = to_term(Factor('.', eval_method=Factor.EvalMethod.LOOKUP))
-    return context.set_operational_level(
-        OperationalLevel.TERM
-    ).with_result(term)
+    return context.set_operational_level(OperationalLevel.TERM).with_result(
+        term
+    )
 
 
 def UNARY_NEGATION_impl(
@@ -401,9 +396,9 @@ def UNARY_NEGATION_impl(
     child = node.get_parameters()
     context = child(context)
     result = to_terms(context.get_result())
-    return context.set_operational_level(
-        OperationalLevel.TERMS
-    ).with_result(result)
+    return context.set_operational_level(OperationalLevel.TERMS).with_result(
+        result
+    )
 
 
 def APPEND_impl(
@@ -429,9 +424,9 @@ def APPEND_impl(
             if ONE in all_terms:
                 del all_terms[ONE]
 
-    return context.set_operational_level(
-        OperationalLevel.TERMS
-    ).with_result(to_terms(all_terms))
+    return context.set_operational_level(OperationalLevel.TERMS).with_result(
+        to_terms(all_terms)
+    )
 
 
 def REMOVE_impl(
@@ -445,9 +440,9 @@ def REMOVE_impl(
     context = remove(context)
     remove = context.get_result()
     result = remove_terms(orig, remove)
-    return context.set_operational_level(
-        OperationalLevel.TERMS
-    ).with_result(result)
+    return context.set_operational_level(OperationalLevel.TERMS).with_result(
+        result
+    )
 
 
 def INTERACTION_impl(
@@ -464,16 +459,12 @@ def INTERACTION_impl(
     for next in remaining:
         context = next(context)
         new_seqs = build_factor_seqs(context.get_result())
-        factor_seqs = {
-            a + b: None
-            for a in factor_seqs
-            for b in new_seqs
-        }
+        factor_seqs = {a + b: None for a in factor_seqs for b in new_seqs}
 
     factor_seqs = {to_term(seq): None for seq in factor_seqs}
-    return context.set_operational_level(
-        OperationalLevel.TERMS
-    ).with_result(to_terms(factor_seqs))
+    return context.set_operational_level(OperationalLevel.TERMS).with_result(
+        to_terms(factor_seqs)
+    )
 
 
 def NESTED_impl(
@@ -497,9 +488,9 @@ def NESTED_impl(
         **{to_term(a): None for a in left_factors},
         **{to_term(left_reduced + b): None for b in right_factors},
     }
-    return context.set_operational_level(
-        OperationalLevel.TERMS
-    ).with_result(to_terms(factor_seqs))
+    return context.set_operational_level(OperationalLevel.TERMS).with_result(
+        to_terms(factor_seqs)
+    )
 
 
 def POWER_impl(
@@ -512,7 +503,7 @@ def POWER_impl(
     This is here in case we find a more efficient way to handle power
     operations as a primitive.
     """
-    raise NotImplementedError("Power operations are not yet supported")
+    raise NotImplementedError('Power operations are not yet supported')
 
 
 def PARAMETER_impl(
@@ -522,7 +513,7 @@ def PARAMETER_impl(
     """Handle parameters."""
     value = node.get_parameters()
     return context.set_operational_level(OperationalLevel.NONE).with_result(
-        f"{value(context).get_result()}"
+        f'{value(context).get_result()}'
     )
 
 
@@ -533,7 +524,7 @@ def NAMED_PARAMETER_impl(
     """Handle parameters."""
     name, value = node.get_parameters()
     return context.set_operational_level(OperationalLevel.NONE).with_result(
-        f"{name}={value(context).get_result()}"
+        f'{name}={value(context).get_result()}'
     )
 
 
@@ -543,11 +534,10 @@ def FUNCTION_PARAMETERS_impl(
 ) -> WilkinsonContext:
     """Handle parameters."""
     parameters = [
-        param(context).get_result()
-        for param in node.get_parameters()
+        param(context).get_result() for param in node.get_parameters()
     ]
     dummy_call = f'f({", ".join(parameters)})'
-    parameters = f", {standardise_code(dummy_call)[2:-1]}"
+    parameters = f', {standardise_code(dummy_call)[2:-1]}'
     return context.set_operational_level(OperationalLevel.NONE).with_result(
         parameters
     )
@@ -559,38 +549,46 @@ def NAMED_FUNCTION_impl(
 ) -> WilkinsonContext:
     """Handle named function calls."""
     name, expr, *args, level = node.get_parameters()
-    argstr = args[0](context).get_result() if args else ""
+    argstr = args[0](context).get_result() if args else ''
     context = expr(context)
     result = to_terms(context.get_result())
     match level:
         case OperationalLevel.FACTOR:
-            result = to_terms({
-                to_term([
-                    Factor(
-                        f"{name}({f}{argstr})",
-                        eval_method=Factor.EvalMethod.PYTHON,
-                    )
-                    for f in e.factors
-                ]): None
-                for e in result
-            })
+            result = to_terms(
+                {
+                    to_term(
+                        [
+                            Factor(
+                                f'{name}({f}{argstr})',
+                                eval_method=Factor.EvalMethod.PYTHON,
+                            )
+                            for f in e.factors
+                        ]
+                    ): None
+                    for e in result
+                }
+            )
         case OperationalLevel.TERM:
-            result = to_terms({
-                to_term([
-                    Factor(
-                        (
-                            f"{name}("
-                            f"{' * '.join(f.expr for f in e.factors)}"
-                            f"{argstr})"
-                        ),
-                        eval_method=Factor.EvalMethod.PYTHON,
-                    )
-                ]): None
-                for e in result
-            })
-    return context.set_operational_level(
-        OperationalLevel.TERMS
-    ).with_result(result)
+            result = to_terms(
+                {
+                    to_term(
+                        [
+                            Factor(
+                                (
+                                    f'{name}('
+                                    f'{" * ".join(f.expr for f in e.factors)}'
+                                    f'{argstr})'
+                                ),
+                                eval_method=Factor.EvalMethod.PYTHON,
+                            )
+                        ]
+                    ): None
+                    for e in result
+                }
+            )
+    return context.set_operational_level(OperationalLevel.TERMS).with_result(
+        result
+    )
 
 
 def LHS_RHS_STRUCTURE_impl(
@@ -609,9 +607,9 @@ def LHS_RHS_STRUCTURE_impl(
         lhs=lhs,
         rhs=rhs,
     )
-    return context.set_operational_level(
-        OperationalLevel.BLOCK
-    ).with_result(result)
+    return context.set_operational_level(OperationalLevel.BLOCK).with_result(
+        result
+    )
 
 
 def RESIDUAL_STRUCTURE_impl(
@@ -630,9 +628,9 @@ def RESIDUAL_STRUCTURE_impl(
         residualise=residualise,
         wrt=wrt,
     )
-    return context.set_operational_level(
-        OperationalLevel.BLOCK
-    ).with_result(result)
+    return context.set_operational_level(OperationalLevel.BLOCK).with_result(
+        result
+    )
 
 
 def SUBPARTS_STRUCTURE_impl(
@@ -649,9 +647,9 @@ def SUBPARTS_STRUCTURE_impl(
         context, result = _add_dependencies(context, result)
         subparts.append(result)
     result = Structured(tuple(subparts))
-    return context.set_operational_level(
-        OperationalLevel.BLOCK
-    ).with_result(result)
+    return context.set_operational_level(OperationalLevel.BLOCK).with_result(
+        result
+    )
 
 
 def PUSH_FRAME_impl(
@@ -665,12 +663,12 @@ def PUSH_FRAME_impl(
     dependencies = subcontext.get_result()
     if not isinstance(dependencies, Structured):
         return context.with_result(dependencies)
-    if "lhs" in dependencies:
-        result = _referent_terms(dependencies["lhs"], "_hat")
-    elif "residualise" in dependencies:
-        result = _referent_terms(dependencies["residualise"], "_tilde")
+    if 'lhs' in dependencies:
+        result = _referent_terms(dependencies['lhs'], '_hat')
+    elif 'residualise' in dependencies:
+        result = _referent_terms(dependencies['residualise'], '_tilde')
     else:
-        raise ValueError(f"Unknown dependencies: {dependencies}")
+        raise ValueError(f'Unknown dependencies: {dependencies}')
     if subcontext.state.dependencies is not None:
         dependencies = Structured(
             dependencies,
@@ -709,9 +707,7 @@ def init_hook(
     #             ast,
     #             intercept,
     #         )
-    return ast, context.set_operational_level(
-        OperationalLevel.TERMS
-    )
+    return ast, context.set_operational_level(OperationalLevel.TERMS)
 
 
 def finalise_hook(
@@ -735,12 +731,12 @@ def add_intercept_to_formula(
     context: ExecutionContext,
 ) -> Tuple[Primitive, ExecutionContext]:
     if tree.name in (
-        "LHS_RHS_STRUCTURE",
-        "RESIDUAL_STRUCTURE",
+        'LHS_RHS_STRUCTURE',
+        'RESIDUAL_STRUCTURE',
     ):
         op = (
             LHS_RHS_STRUCTURE
-            if tree.name == "LHS_RHS_STRUCTURE"
+            if tree.name == 'LHS_RHS_STRUCTURE'
             else RESIDUAL_STRUCTURE
         )
         left, right = tree.parameters
@@ -749,7 +745,7 @@ def add_intercept_to_formula(
             left,
             right,
         ), context
-    elif tree.name == "SUBPARTS_STRUCTURE":
+    elif tree.name == 'SUBPARTS_STRUCTURE':
         return SUBPARTS_STRUCTURE.bind(
             *[
                 add_intercept_to_formula(child, context)[0]
@@ -757,10 +753,10 @@ def add_intercept_to_formula(
             ],
         ), context
     elif tree.name in (
-        "APPEND",
-        "REMOVE",
+        'APPEND',
+        'REMOVE',
     ):
-        op = APPEND if tree.name == "APPEND" else REMOVE
+        op = APPEND if tree.name == 'APPEND' else REMOVE
         left, *others = tree.parameters
         left = add_intercept_to_formula(left, context)[0]
         return op.bind(
@@ -783,7 +779,7 @@ def ppr_add_intercept(
     ) -> Tuple[Primitive, ExecutionContext]:
         if not isinstance(tree, Primitive) or tree.is_terminal:
             return tree, context
-        if tree.name =="PUSH_FRAME":
+        if tree.name == 'PUSH_FRAME':
             return PUSH_FRAME.bind(
                 ppr_add_intercept(
                     tree.get_parameters(),
@@ -791,10 +787,7 @@ def ppr_add_intercept(
                 )[0],
             ), context
         return tree.bind(
-            *[
-                _walk(child, context)[0]
-                for child in tree.parameters
-            ],
+            *[_walk(child, context)[0] for child in tree.parameters],
         ), context
 
     tree, context = add_intercept_to_formula(tree, context)
@@ -805,9 +798,13 @@ def ppr_add_intercept(
 INTERPRETERS.register_interpreter('formulaic')
 INTERPRETERS.register_group('build', ['formulaic'])
 INTERPRETERS.register_operation('build', 'VARIABLE', VARIABLE_impl)
-INTERPRETERS.register_operation('build', 'NUMERIC_LITERAL', NUMERIC_LITERAL_impl)
+INTERPRETERS.register_operation(
+    'build', 'NUMERIC_LITERAL', NUMERIC_LITERAL_impl
+)
 INTERPRETERS.register_operation('build', 'EXECUTE', EXECUTE_impl)
-INTERPRETERS.register_operation('build', 'VARIABLE_COMPLEMENT', VARIABLE_COMPLEMENT_impl)
+INTERPRETERS.register_operation(
+    'build', 'VARIABLE_COMPLEMENT', VARIABLE_COMPLEMENT_impl
+)
 INTERPRETERS.register_operation('build', 'UNARY_NEGATION', UNARY_NEGATION_impl)
 INTERPRETERS.register_operation('build', 'APPEND', APPEND_impl)
 INTERPRETERS.register_operation('build', 'REMOVE', REMOVE_impl)
@@ -816,12 +813,23 @@ INTERPRETERS.register_operation('build', 'NESTED', NESTED_impl)
 INTERPRETERS.register_operation('build', 'POWER', POWER_impl)
 INTERPRETERS.register_operation('build', 'NAMED_FUNCTION', NAMED_FUNCTION_impl)
 INTERPRETERS.register_operation('build', 'PARAMETER', PARAMETER_impl)
-INTERPRETERS.register_operation('build', 'NAMED_PARAMETER', NAMED_PARAMETER_impl)
-INTERPRETERS.register_operation('build', 'FUNCTION_PARAMETERS', FUNCTION_PARAMETERS_impl)
-INTERPRETERS.register_operation('build', 'LHS_RHS_STRUCTURE', LHS_RHS_STRUCTURE_impl)
-INTERPRETERS.register_operation('build', 'RESIDUAL_STRUCTURE', RESIDUAL_STRUCTURE_impl)
-INTERPRETERS.register_operation('build', 'SUBPARTS_STRUCTURE', SUBPARTS_STRUCTURE_impl)
+INTERPRETERS.register_operation(
+    'build', 'NAMED_PARAMETER', NAMED_PARAMETER_impl
+)
+INTERPRETERS.register_operation(
+    'build', 'FUNCTION_PARAMETERS', FUNCTION_PARAMETERS_impl
+)
+INTERPRETERS.register_operation(
+    'build', 'LHS_RHS_STRUCTURE', LHS_RHS_STRUCTURE_impl
+)
+INTERPRETERS.register_operation(
+    'build', 'RESIDUAL_STRUCTURE', RESIDUAL_STRUCTURE_impl
+)
+INTERPRETERS.register_operation(
+    'build', 'SUBPARTS_STRUCTURE', SUBPARTS_STRUCTURE_impl
+)
 INTERPRETERS.register_operation('build', 'PUSH_FRAME', PUSH_FRAME_impl)
+
 
 def get_processor():
     processor = TransformProcessor(

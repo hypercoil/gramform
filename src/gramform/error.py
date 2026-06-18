@@ -15,6 +15,7 @@ class ParseState:
     automatically orchestrate the creation of `ParseState`s and their use
     in error reporting.
     """
+
     current_state: int = 0
     token_stack: List[Any] = dataclasses.field(default_factory=list)
     state_stack: List[int] = dataclasses.field(default_factory=list)
@@ -23,9 +24,7 @@ class ParseState:
     valid_reduces: Set[Tuple[int, int]] = dataclasses.field(
         default_factory=set
     )
-    error_context: List[Any] = dataclasses.field(
-        default_factory=list
-    )
+    error_context: List[Any] = dataclasses.field(default_factory=list)
 
     def update(self, parser: Any) -> None:
         """Update the state with current parser information."""
@@ -38,9 +37,7 @@ class ParseState:
         # Update valid actions
         actions = parser.action[self.current_state]
         self.valid_shifts = {
-            s
-            for t, s in actions.items()
-            if t != 'error' and s > 0
+            s for t, s in actions.items() if t != 'error' and s > 0
         }
         self.valid_reduces = {
             (-r, self.current_state)
@@ -66,6 +63,7 @@ class ErrorAnalyzer:
     automatically orchestrate the creation of `ErrorAnalyzer`s and their
     use in error reporting.
     """
+
     grammar: Any
     state_machine: Any
 
@@ -113,7 +111,7 @@ class ErrorAnalyzer:
                         matched_tokens = [
                             t.value for t in parse_state.token_stack
                         ]
-                        remaining = rhs[len(matched_tokens):]
+                        remaining = rhs[len(matched_tokens) :]
                         if remaining:
                             # Generate concrete examples for remaining tokens
                             concrete_remaining = []
@@ -125,12 +123,14 @@ class ErrorAnalyzer:
                                 else:
                                     concrete_remaining.append(token_name)
 
-                            valid_completions.append({
-                                'production': prod.rule,
-                                'matched': matched_tokens,
-                                'remaining': remaining,
-                                'concrete_remaining': concrete_remaining,
-                            })
+                            valid_completions.append(
+                                {
+                                    'production': prod.rule,
+                                    'matched': matched_tokens,
+                                    'remaining': remaining,
+                                    'concrete_remaining': concrete_remaining,
+                                }
+                            )
 
         # Get context from state stack
         context = []
@@ -161,6 +161,7 @@ class RecoveryStrategy:
     automatically orchestrate the creation of `RecoveryStrategy`s and their
     use in error reporting.
     """
+
     grammar: Any
     error_analyzer: ErrorAnalyzer
 
@@ -204,9 +205,9 @@ class RecoveryStrategy:
         # in any reachable state
         sync_tokens = set()
         for state in reachable_states:
-            for t, s in (
-                self.error_analyzer.state_machine.action[state].items()
-            ):
+            for t, s in self.error_analyzer.state_machine.action[
+                state
+            ].items():
                 if t != 'error' and s > 0:
                     sync_tokens.add(t)
 
@@ -223,7 +224,7 @@ class RecoveryStrategy:
         parse_state: ParseState,
     ) -> Optional[Dict[str, Any]]:
         """Attempt phrase level recovery by trying to fix common mistakes."""
-        raise NotImplementedError("Phrase level recovery not implemented")
+        raise NotImplementedError('Phrase level recovery not implemented')
         # # Get valid tokens and completions
         # analysis = self.error_analyzer.analyze_error(parse_state)
 
@@ -289,14 +290,11 @@ class GrammarErrorHandler:
     _parser: Optional[Any]
         Reference to the parser instance.
     """
+
     token_error: Optional[callable] = None
     parser_error: Optional[callable] = None
-    error_contexts: Dict[str, str] = dataclasses.field(
-        default_factory=dict
-    )
-    example_values: Dict[str, str] = dataclasses.field(
-        default_factory=dict
-    )
+    error_contexts: Dict[str, str] = dataclasses.field(default_factory=dict)
+    example_values: Dict[str, str] = dataclasses.field(default_factory=dict)
     _parser: Optional[Any] = None
     _parse_state: Optional[ParseState] = None
     _error_analyzer: Optional[ErrorAnalyzer] = None
@@ -305,19 +303,19 @@ class GrammarErrorHandler:
     def __post_init__(self):
         """Validate the error handler."""
         if self.token_error and not callable(self.token_error):
-            raise ValueError("Token error handler must be callable")
+            raise ValueError('Token error handler must be callable')
         if self.parser_error and not callable(self.parser_error):
-            raise ValueError("Parser error handler must be callable")
+            raise ValueError('Parser error handler must be callable')
         if not all(
             isinstance(k, str) and isinstance(v, str)
             for k, v in self.error_contexts.items()
         ):
-            raise ValueError("Error contexts must be string-string pairs")
+            raise ValueError('Error contexts must be string-string pairs')
         if not all(
             isinstance(k, str) and isinstance(v, str)
             for k, v in self.example_values.items()
         ):
-            raise ValueError("Example values must be string-string pairs")
+            raise ValueError('Example values must be string-string pairs')
 
     def materialise_examples(
         self,
@@ -331,10 +329,7 @@ class GrammarErrorHandler:
             token.name: precomputed.get(token.name, token.generate_example())
             for token in tokens
         }
-        return dataclasses.replace(
-            self,
-            example_values=example_values
-        )
+        return dataclasses.replace(self, example_values=example_values)
 
     def _set_parser(self, parser: Any) -> None:
         """
@@ -343,14 +338,12 @@ class GrammarErrorHandler:
         object.__setattr__(self, '_parser', parser)
         object.__setattr__(self, '_parse_state', ParseState())
         object.__setattr__(
-            self,
-            '_error_analyzer',
-            ErrorAnalyzer(parser.grammar, parser)
+            self, '_error_analyzer', ErrorAnalyzer(parser.grammar, parser)
         )
         object.__setattr__(
             self,
             '_recovery_strategy',
-            RecoveryStrategy(parser.grammar, self._error_analyzer)
+            RecoveryStrategy(parser.grammar, self._error_analyzer),
         )
 
         # Build token type to category mapping
@@ -359,9 +352,8 @@ class GrammarErrorHandler:
             # Get the original token definitions from the grammar components
             for component in parser.grammar.components:
                 for token_def in component.tokens:
-                    if (
-                        hasattr(token_def, 'name') and
-                        hasattr(token_def, 'category')
+                    if hasattr(token_def, 'name') and hasattr(
+                        token_def, 'category'
                     ):
                         token_categories[token_def.name] = token_def.category
         object.__setattr__(self, '_token_categories', token_categories)
@@ -370,6 +362,7 @@ class GrammarErrorHandler:
         """Create a PLY-compatible token error function."""
         if self.token_error:
             return self.token_error
+
         # Default token error handler with context
         def t_error(t):
             # Get the line and column information
@@ -395,26 +388,27 @@ class GrammarErrorHandler:
                 if not line_content.strip():
                     # Find the next non-empty line
                     lines = lexdata.splitlines()
-                    for i, l in enumerate(lines, 1):
-                        if l.strip() and i >= line:
-                            line_content = l
+                    for i, ln in enumerate(lines, 1):
+                        if ln.strip() and i >= line:
+                            line_content = ln
                             line = i
-                            line_start = lexdata.find(l)
+                            line_start = lexdata.find(ln)
                             col = pos - line_start + 1
                             break
                 pointer = ' ' * (col - 1) + '^'
                 context = next(
                     (
-                        msg for ctx, msg in self.error_contexts.items()
+                        msg
+                        for ctx, msg in self.error_contexts.items()
                         if ctx in t.type
                     ),
-                    f"Illegal character '{value[0]}'"
+                    f"Illegal character '{value[0]}'",
                 )
                 error_msg = (
-                    f"Lexical error at line {line}, column {col}:\n"
-                    f"{line_content}\n"
-                    f"{pointer}\n"
-                    f"{context}"
+                    f'Lexical error at line {line}, column {col}:\n'
+                    f'{line_content}\n'
+                    f'{pointer}\n'
+                    f'{context}'
                 )
             except Exception:
                 # Fallback if we can't get line context
@@ -422,10 +416,11 @@ class GrammarErrorHandler:
                 pos = getattr(t, 'lexpos', '?')
                 line = getattr(t, 'lineno', '?')
                 error_msg = (
-                    f"Lexical error at line {line}, position {pos}: "
+                    f'Lexical error at line {line}, position {pos}: '
                     f"Illegal character '{value[0] if value else '?'}'"
                 )
             raise ValueError(error_msg)
+
         return t_error
 
     def create_parser_error_function(self) -> callable:
@@ -438,7 +433,7 @@ class GrammarErrorHandler:
             if p is None:  # EOF case
                 if self._parser is None:
                     raise ValueError(
-                        "Error handler is missing a parser reference"
+                        'Error handler is missing a parser reference'
                     )
 
                 # Update parse state
@@ -446,7 +441,7 @@ class GrammarErrorHandler:
                 analysis = self._error_analyzer.analyze_error(
                     self._parse_state,
                 )
-                error_msg = ["Unexpected end of input"]
+                error_msg = ['Unexpected end of input']
 
                 if self._parse_state.token_stack:
                     last_token = self._parse_state.token_stack[-1]
@@ -462,9 +457,9 @@ class GrammarErrorHandler:
                         line_content = lexdata[line_start:line_end]
                         col = pos - line_start + len(str(last_token.value))
                         pointer = ' ' * (col - 1) + '^'
-                        error_msg.append(f"at line {line}, column {col}:")
-                        error_msg.append(f"{line_content}")
-                        error_msg.append(f"{pointer}")
+                        error_msg.append(f'at line {line}, column {col}:')
+                        error_msg.append(f'{line_content}')
+                        error_msg.append(f'{pointer}')
                         error_msg.append(
                             f"Last valid token was '{last_token.value}' of "
                             f"type '{last_token.type}'"
@@ -475,17 +470,17 @@ class GrammarErrorHandler:
                             self._parse_state,
                         )
                         if context:
-                            error_msg.append(f"\nContext: {context}")
+                            error_msg.append(f'\nContext: {context}')
                     except Exception:
                         error_msg.append(
                             f"Last valid token was '{last_token.value}' of "
                             f"type '{last_token.type}'"
                         )
                 else:
-                    error_msg.append("No valid tokens were parsed.")
+                    error_msg.append('No valid tokens were parsed.')
 
                 # Add expected tokens (always show section for consistency)
-                error_msg.append("\nExpected one of:")
+                error_msg.append('\nExpected one of:')
                 if analysis['valid_tokens']:
                     for token_name in analysis['valid_tokens']:
                         if token_name in analysis.get('token_examples', {}):
@@ -494,12 +489,12 @@ class GrammarErrorHandler:
                                 f"  - {token_name} (e.g., '{example}')"
                             )
                         else:
-                            error_msg.append(f"  - {token_name}")
+                            error_msg.append(f'  - {token_name}')
                 else:
-                    error_msg.append("  (no valid tokens)")
+                    error_msg.append('  (no valid tokens)')
 
                 # Add valid completions (always show section for consistency)
-                error_msg.append("\nValid completions could be:")
+                error_msg.append('\nValid completions could be:')
                 if analysis['valid_completions']:
                     for completion in analysis['valid_completions'][:3]:
                         matched = ' '.join(completion['matched'])
@@ -509,9 +504,9 @@ class GrammarErrorHandler:
                             )
                         else:
                             remaining = ' '.join(completion['remaining'])
-                        error_msg.append(f"  {matched} {remaining}")
+                        error_msg.append(f'  {matched} {remaining}')
                 else:
-                    error_msg.append("  (no valid completions)")
+                    error_msg.append('  (no valid completions)')
 
                 # Add recovery suggestion if available
                 recovery = self._recovery_strategy.attempt_recovery(
@@ -520,18 +515,18 @@ class GrammarErrorHandler:
                 if recovery:
                     if recovery['strategy'] == 'panic_mode':
                         error_msg.append(
-                            f"\nRecovery: Skip until one of: "
-                            f"{', '.join(recovery['sync_tokens'])}"
+                            f'\nRecovery: Skip until one of: '
+                            f'{", ".join(recovery["sync_tokens"])}'
                         )
                     elif recovery['strategy'] == 'phrase_level':
                         error_msg.append(
-                            f"\nRecovery: Insert missing "
-                            f"{recovery['mistake_type']}"
+                            f'\nRecovery: Insert missing '
+                            f'{recovery["mistake_type"]}'
                         )
                     elif recovery['strategy'] == 'error_production':
                         error_msg.append(
-                            f"\nRecovery: Complete as: "
-                            f"{recovery['completion']['production']}"
+                            f'\nRecovery: Complete as: '
+                            f'{recovery["completion"]["production"]}'
                         )
 
                 # Add context-specific message if available
@@ -540,9 +535,9 @@ class GrammarErrorHandler:
                     self._parse_state,
                 )
                 if context:
-                    error_msg.append(f"\nContext: {context}")
+                    error_msg.append(f'\nContext: {context}')
 
-                error_msg = "\n".join(error_msg)
+                error_msg = '\n'.join(error_msg)
                 raise ValueError(error_msg)
             else:
                 # Non-EOF case
@@ -585,34 +580,34 @@ class GrammarErrorHandler:
 
                     # Format the error message
                     error_msg = [
-                        f"Syntax error at line {line}, column {col}:",
-                        f"{line_content}",
-                        f"{pointer}",
-                        f"Unexpected token '{value}' of type '{type_}'"
+                        f'Syntax error at line {line}, column {col}:',
+                        f'{line_content}',
+                        f'{pointer}',
+                        f"Unexpected token '{value}' of type '{type_}'",
                     ]
 
                     # Add expected tokens (always show section for
                     # consistency)
-                    error_msg.append("\nExpected one of:")
+                    error_msg.append('\nExpected one of:')
                     if analysis['valid_tokens']:
                         for token_name in analysis['valid_tokens']:
                             if token_name in analysis.get(
                                 'token_examples', {}
                             ):
-                                example = analysis[
-                                    'token_examples'
-                                ][token_name]
+                                example = analysis['token_examples'][
+                                    token_name
+                                ]
                                 error_msg.append(
                                     f"  - {token_name} (e.g., '{example}')"
                                 )
                             else:
-                                error_msg.append(f"  - {token_name}")
+                                error_msg.append(f'  - {token_name}')
                     else:
-                        error_msg.append("  (no valid tokens)")
+                        error_msg.append('  (no valid tokens)')
 
                     # Add valid completions (always show section for
                     # consistency)
-                    error_msg.append("\nValid completions could be:")
+                    error_msg.append('\nValid completions could be:')
                     if analysis['valid_completions']:
                         for completion in analysis['valid_completions'][:3]:
                             matched = ' '.join(completion['matched'])
@@ -622,26 +617,26 @@ class GrammarErrorHandler:
                                 )
                             else:
                                 remaining = ' '.join(completion['remaining'])
-                            error_msg.append(f"  {matched} {remaining}")
+                            error_msg.append(f'  {matched} {remaining}')
                     else:
-                        error_msg.append("  (no valid completions)")
+                        error_msg.append('  (no valid completions)')
 
                     # Add recovery suggestion if available
                     if recovery:
                         if recovery['strategy'] == 'panic_mode':
                             error_msg.append(
-                                f"\nRecovery: Skip until one of: "
-                                f"{', '.join(recovery['sync_tokens'])}"
+                                f'\nRecovery: Skip until one of: '
+                                f'{", ".join(recovery["sync_tokens"])}'
                             )
                         elif recovery['strategy'] == 'phrase_level':
                             error_msg.append(
-                                f"\nRecovery: Insert missing "
-                                f"{recovery['mistake_type']}"
+                                f'\nRecovery: Insert missing '
+                                f'{recovery["mistake_type"]}'
                             )
                         elif recovery['strategy'] == 'error_production':
                             error_msg.append(
-                                f"\nRecovery: Complete as: "
-                                f"{recovery['completion']['production']}"
+                                f'\nRecovery: Complete as: '
+                                f'{recovery["completion"]["production"]}'
                             )
 
                     # Add context-specific message if available
@@ -650,9 +645,9 @@ class GrammarErrorHandler:
                         self._parse_state,
                     )
                     if context:
-                        error_msg.append(f"\nContext: {context}")
+                        error_msg.append(f'\nContext: {context}')
 
-                    error_msg = "\n".join(error_msg)
+                    error_msg = '\n'.join(error_msg)
                     raise ValueError(error_msg)
                 except (AttributeError, IndexError, Exception):
                     # Fallback if we can't get line context
@@ -663,9 +658,9 @@ class GrammarErrorHandler:
                     line_content = None
                     pointer = None
                     if (
-                        hasattr(token, 'lexer') and
-                        hasattr(token.lexer, 'lexdata') and
-                        pos != '?'
+                        hasattr(token, 'lexer')
+                        and hasattr(token.lexer, 'lexdata')
+                        and pos != '?'
                     ):
                         lexdata = token.lexer.lexdata
                         line_start = lexdata.rfind('\n', 0, pos) + 1
@@ -682,50 +677,50 @@ class GrammarErrorHandler:
                     )
 
                     if (
-                        col is not None and
-                        line_content is not None and
-                        pointer is not None
+                        col is not None
+                        and line_content is not None
+                        and pointer is not None
                     ):
                         error_msg = [
-                            f"Syntax error at line {line}, column {col}:",
-                            f"{line_content}",
-                            f"{pointer}",
-                            f"Unexpected token '{value}' of type '{type_}'"
+                            f'Syntax error at line {line}, column {col}:',
+                            f'{line_content}',
+                            f'{pointer}',
+                            f"Unexpected token '{value}' of type '{type_}'",
                         ]
                     elif col is not None:
                         error_msg = [
-                            f"Syntax error at line {line}, column {col}: "
+                            f'Syntax error at line {line}, column {col}: '
                             f"Unexpected token '{value}' of type '{type_}'"
                         ]
                     else:
                         error_msg = [
-                            f"Syntax error at line {line}, position {pos}: "
+                            f'Syntax error at line {line}, position {pos}: '
                             f"Unexpected token '{value}' of type '{type_}'"
                         ]
 
                     # Add expected tokens (always show section for
                     # consistency)
-                    error_msg.append("\nExpected one of:")
+                    error_msg.append('\nExpected one of:')
                     if analysis['valid_tokens']:
                         for token_name in analysis['valid_tokens']:
                             if token_name in analysis.get(
                                 'token_examples',
                                 {},
                             ):
-                                example = analysis[
-                                    'token_examples'
-                                ][token_name]
+                                example = analysis['token_examples'][
+                                    token_name
+                                ]
                                 error_msg.append(
                                     f"  - {token_name} (e.g., '{example}')"
                                 )
                             else:
-                                error_msg.append(f"  - {token_name}")
+                                error_msg.append(f'  - {token_name}')
                     else:
-                        error_msg.append("  (no valid tokens)")
+                        error_msg.append('  (no valid tokens)')
 
                     # Add valid completions (always show section for
                     # consistency)
-                    error_msg.append("\nValid completions could be:")
+                    error_msg.append('\nValid completions could be:')
                     if analysis['valid_completions']:
                         for completion in analysis['valid_completions'][:3]:
                             matched = ' '.join(completion['matched'])
@@ -735,9 +730,9 @@ class GrammarErrorHandler:
                                 )
                             else:
                                 remaining = ' '.join(completion['remaining'])
-                            error_msg.append(f"  {matched} {remaining}")
+                            error_msg.append(f'  {matched} {remaining}')
                     else:
-                        error_msg.append("  (no valid completions)")
+                        error_msg.append('  (no valid completions)')
 
                     # Add context-specific message if available
                     context = self._get_error_context(
@@ -745,9 +740,9 @@ class GrammarErrorHandler:
                         self._parse_state,
                     )
                     if context:
-                        error_msg.append(f"\nContext: {context}")
+                        error_msg.append(f'\nContext: {context}')
 
-                    error_msg = "\n".join(error_msg)
+                    error_msg = '\n'.join(error_msg)
                     raise ValueError(error_msg)
 
         return p_error
@@ -764,8 +759,8 @@ class GrammarErrorHandler:
         # 1. Token category (most specific) - use token type to category
         #    mapping
         if (
-            hasattr(self, '_token_categories') and
-            token.type in self._token_categories
+            hasattr(self, '_token_categories')
+            and token.type in self._token_categories
         ):
             category = self._token_categories[token.type]
             if category and category in self.error_contexts:

@@ -20,33 +20,33 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS :: MacOS X",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "ply",
     "wadler-lindig",
+    "pydantic",
 ]
 
 [project.optional-dependencies]
-dfops = [
-    "narwhals",
+# The Wilkinson grammar's interpreter emits ``formulaic`` objects.
+wilkinson = [
+    "formulaic",
 ]
-imops = [
-    "nibabel",
-    "jax >= 0.3.16",
-]
-full = [
+# The dataframe / covariate (``minimaltest``) interpreters operate via narwhals.
+dataframe = [
     "narwhals",
-    "nibabel",
-    "jax >= 0.3.16",
+    "numpy",
 ]
 dev = [
-    "matplotlib",
     "pytest",
     "pytest-cov",
     "coverage[toml]",
     "ruff",
-    "blue",
-    "templateflow",
+    "pyright",
+    "formulaic",
+    "narwhals",
+    "numpy",
+    "pandas",
 ]
 
 [project.urls]
@@ -74,5 +74,15 @@ lint.select = [
     "I001",
 ]
 
+[tool.ruff.format]
+quote-style = "single"
+
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+
+[tool.pyright]
+# Scoped to the nwx IR/contract -- the typed surface we gate on. The core
+# PLY/pydantic engine is dynamic by design (runtime-built lexer/parser), so it
+# is exercised by the test suite rather than statically type-checked here.
+include = ["src/gramform/grammars/nwx"]
+typeCheckingMode = "basic"

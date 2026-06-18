@@ -6,52 +6,52 @@ DataFrames
 ~~~~~~~~~~
 Grammar for DataFrame operations.
 """
-from dataclasses import dataclass, field
+
+from dataclasses import dataclass
 from typing import Tuple
 
 from gramform.core import (
     Associativity,
-    binop_infix,
-    enter_group,
     DynamicGrammar,
     GrammarComponent,
     GrammarErrorHandler,
     Literal,
+    Primitive,
+    ProductionRule,
+    Token,
+    binop_infix,
+    enter_group,
     literal,
     pop_state_and_return,
     precedence_from_sequence,
-    Primitive,
-    ProductionRule,
     push_state_and_return,
-    Token,
     unop_prefix,
 )
 
-
 # Base primitives
-CONCATENATE = Primitive("CONCATENATE", is_associative=True)
-POWER = Primitive("POWER")
-BACKDIFF = Primitive("BACKDIFF")
-RANGE = Primitive("RANGE")
-ENUM = Primitive("ENUM", is_associative=True)
-INDICATOR = Primitive("INDICATOR")
-UNION = Primitive("UNION", is_associative=True)
-UNION_REDUCE = Primitive("UNION_REDUCE")
-INTERSECTION = Primitive("INTERSECTION", is_associative=True)
-INTERSECTION_REDUCE = Primitive("INTERSECTION_REDUCE")
-NEGATION = Primitive("NEGATION")
-SCATTER = Primitive("SCATTER")
-FIRST_N = Primitive("FIRST_N")
-CUMUL_VAR = Primitive("CUMUL_VAR")
-ASSIGNMENT = Primitive("ASSIGNMENT")
-COLLECT_PARAMETERS = Primitive("COLLECT_PARAMETERS")
-CONDITION_EQUAL = Primitive("CONDITION_EQUAL", is_associative=True)
-CONDITION_NOT_EQUAL = Primitive("CONDITION_NOT_EQUAL", is_associative=True)
-CONDITION_LESS = Primitive("CONDITION_LESS")
-CONDITION_LESS_EQUAL = Primitive("CONDITION_LESS_EQUAL")
-CONDITION_GREATER = Primitive("CONDITION_GREATER")
-CONDITION_GREATER_EQUAL = Primitive("CONDITION_GREATER_EQUAL")
-VARIABLE = Primitive("VARIABLE", is_terminal=True)
+CONCATENATE = Primitive('CONCATENATE', is_associative=True)
+POWER = Primitive('POWER')
+BACKDIFF = Primitive('BACKDIFF')
+RANGE = Primitive('RANGE')
+ENUM = Primitive('ENUM', is_associative=True)
+INDICATOR = Primitive('INDICATOR')
+UNION = Primitive('UNION', is_associative=True)
+UNION_REDUCE = Primitive('UNION_REDUCE')
+INTERSECTION = Primitive('INTERSECTION', is_associative=True)
+INTERSECTION_REDUCE = Primitive('INTERSECTION_REDUCE')
+NEGATION = Primitive('NEGATION')
+SCATTER = Primitive('SCATTER')
+FIRST_N = Primitive('FIRST_N')
+CUMUL_VAR = Primitive('CUMUL_VAR')
+ASSIGNMENT = Primitive('ASSIGNMENT')
+COLLECT_PARAMETERS = Primitive('COLLECT_PARAMETERS')
+CONDITION_EQUAL = Primitive('CONDITION_EQUAL', is_associative=True)
+CONDITION_NOT_EQUAL = Primitive('CONDITION_NOT_EQUAL', is_associative=True)
+CONDITION_LESS = Primitive('CONDITION_LESS')
+CONDITION_LESS_EQUAL = Primitive('CONDITION_LESS_EQUAL')
+CONDITION_GREATER = Primitive('CONDITION_GREATER')
+CONDITION_GREATER_EQUAL = Primitive('CONDITION_GREATER_EQUAL')
+VARIABLE = Primitive('VARIABLE', is_terminal=True)
 
 
 def confound_formula_preprocessor():
@@ -69,35 +69,35 @@ def confound_formula_preprocessor():
 
 
 TOKEN_PRECEDENCE = (
-    "CONCATENATE",
-    ("SCATTER", "CUMUL_VAR", "FIRST_N"),
-    "NEGATION",
-    "UNION",
-    "INTERSECTION",
-    "UNION_REDUCE",
-    "INTERSECTION_REDUCE",
-    "NEGATION_SURFACE",
+    'CONCATENATE',
+    ('SCATTER', 'CUMUL_VAR', 'FIRST_N'),
+    'NEGATION',
+    'UNION',
+    'INTERSECTION',
+    'UNION_REDUCE',
+    'INTERSECTION_REDUCE',
+    'NEGATION_SURFACE',
     (
-        "CONDITION_EQUAL",
-        "CONDITION_NOT_EQUAL",
-        "CONDITION_LESS",
-        "CONDITION_LESS_EQUAL",
-        "CONDITION_GREATER",
-        "CONDITION_GREATER_EQUAL",
+        'CONDITION_EQUAL',
+        'CONDITION_NOT_EQUAL',
+        'CONDITION_LESS',
+        'CONDITION_LESS_EQUAL',
+        'CONDITION_GREATER',
+        'CONDITION_GREATER_EQUAL',
     ),
     (
-        "POWER",
-        "POWER_INCLUSIVE",
+        'POWER',
+        'POWER_INCLUSIVE',
     ),
     (
-        "BACKDIFF",
-        "BACKDIFF_INCLUSIVE",
+        'BACKDIFF',
+        'BACKDIFF_INCLUSIVE',
     ),
-    "ENUM_SEP",
-    "RANGE",
-    ("begin_param", "end_param"),
-    "ARG_SEP",
-    "KV_SEP",
+    'ENUM_SEP',
+    'RANGE',
+    ('begin_param', 'end_param'),
+    'ARG_SEP',
+    'KV_SEP',
 )
 from_sequence, with_precedence = precedence_from_sequence(TOKEN_PRECEDENCE)
 
@@ -111,6 +111,7 @@ def variable(t, grammar):
 @dataclass(frozen=True)
 class BasicOperatorsComponent(GrammarComponent):
     """Component for basic operators."""
+
     tokens: Tuple[Token, ...] = (
         # Basic operators
         Token(
@@ -134,7 +135,6 @@ class BasicOperatorsComponent(GrammarComponent):
             associativity=Associativity.LEFT,
             category='DELIMITER',
         ),
-
         # Parentheses and brackets
         Token('LPAREN', r'\(', category='PARENTHESIS'),
         Token('RPAREN', r'\)', category='PARENTHESIS'),
@@ -142,11 +142,9 @@ class BasicOperatorsComponent(GrammarComponent):
         Token('RBRACKET', r'\]', category='BRACKET'),
         Token('LBRACE', r'\{', category='BRACE'),
         Token('RBRACE', r'\}', category='BRACE'),
-
         # Numbers
         Token('FLOAT', r'\d+\.\d*', category='LITERAL'),
         Token('INTEGER', r'\d+', category='LITERAL'),
-
         # Whitespace
         Token('ignore', ' \t'),
     )
@@ -170,14 +168,12 @@ class BasicOperatorsComponent(GrammarComponent):
             'expression : expression ENUM_SEP expression',
             binop_infix(ENUM),
         ),
-
         # Parentheses
         ProductionRule(
             'expression_paren_term',
             'expression : LPAREN expression RPAREN',
             enter_group(),
         ),
-
         # Numbers
         ProductionRule(
             'expression_term_integer',
@@ -195,6 +191,7 @@ class BasicOperatorsComponent(GrammarComponent):
 @dataclass(frozen=True)
 class ConditionComponent(GrammarComponent):
     """Component for condition handling."""
+
     tokens: Tuple[Token, ...] = (
         Token(
             'CONDITION_EQUAL',
@@ -277,6 +274,7 @@ class ConditionComponent(GrammarComponent):
 @dataclass(frozen=True)
 class BooleanLogicComponent(GrammarComponent):
     """Component for boolean logic."""
+
     tokens: Tuple[Token, ...] = (
         Token(
             'UNION',
@@ -360,17 +358,17 @@ class BooleanLogicComponent(GrammarComponent):
         ProductionRule(
             'expression_intersection_reduce',
             'expression : INTERSECTION_REDUCE LPAREN expression RPAREN',
-            lambda _, __, right, ___: INTERSECTION_REDUCE.bind(right)
+            lambda _, __, right, ___: INTERSECTION_REDUCE.bind(right),
         ),
         ProductionRule(
             'expression_union_reduce',
             'expression : UNION_REDUCE LPAREN expression RPAREN',
-            lambda _, __, right, ___: UNION_REDUCE.bind(right)
+            lambda _, __, right, ___: UNION_REDUCE.bind(right),
         ),
         ProductionRule(
             'expression_negation_surface',
             'expression : NEGATION_SURFACE LPAREN expression RPAREN',
-            lambda _, __, right, ___: INDICATOR.bind(NEGATION.bind(right))
+            lambda _, __, right, ___: INDICATOR.bind(NEGATION.bind(right)),
         ),
         ProductionRule(
             'expression_scatter',
@@ -418,9 +416,7 @@ class ParameterComponent(GrammarComponent):
         ),
     )
 
-    states: Tuple[Tuple[str, str], ...] = (
-        ('param', 'inclusive'),
-    )
+    states: Tuple[Tuple[str, str], ...] = (('param', 'inclusive'),)
 
     production_rules: Tuple[ProductionRule, ...] = (
         ProductionRule(
@@ -435,15 +431,17 @@ class ParameterComponent(GrammarComponent):
                 COLLECT_PARAMETERS.bind(*inner)
                 if isinstance(inner, tuple)
                 else COLLECT_PARAMETERS.bind(inner)
-            )
+            ),
         ),
         ProductionRule(
             'param_expr',
             'expression : expression ARG_SEP expression',
-            lambda left, _, right: COLLECT_PARAMETERS.bind(*(
-                tuple(left if isinstance(left, tuple) else (left,)) +
-                tuple(right if isinstance(right, tuple) else (right,))
-            ))
+            lambda left, _, right: COLLECT_PARAMETERS.bind(
+                *(
+                    tuple(left if isinstance(left, tuple) else (left,))
+                    + tuple(right if isinstance(right, tuple) else (right,))
+                )
+            ),
         ),
         ProductionRule(
             'param_expr_key_val',
@@ -471,7 +469,7 @@ class VariableComponent(GrammarComponent):
         ProductionRule(
             'expression_term_variable',
             'expression : VARIABLE',
-            lambda terminal: VARIABLE.bind(terminal)
+            lambda terminal: VARIABLE.bind(terminal),
         ),
     )
 
@@ -534,23 +532,32 @@ class SpecialOperatorsComponent(GrammarComponent):
         ProductionRule(
             'expression_power_inclusive',
             'expression : expression POWER_INCLUSIVE expression',
-            lambda left, _, right: POWER.bind(left, RANGE.bind(
-                Literal.create(1, int),
-                right,
-            ))
+            lambda left, _, right: POWER.bind(
+                left,
+                RANGE.bind(
+                    Literal.create(1, int),
+                    right,
+                ),
+            ),
         ),
         ProductionRule(
             'expression_backdiff',
             'expression : BACKDIFF parameter LPAREN expression RPAREN',
-            lambda _, parameter, __, inner, ___: BACKDIFF.bind(inner, parameter)
+            lambda _, parameter, __, inner, ___: BACKDIFF.bind(
+                inner, parameter
+            ),
         ),
         ProductionRule(
             'expression_backdiff_inclusive',
-            'expression : BACKDIFF_INCLUSIVE parameter LPAREN expression RPAREN',
-            lambda _, parameter, __, inner, ___: BACKDIFF.bind(inner, RANGE.bind(
-                Literal.create(0, int),
-                parameter,
-            ))
+            'expression : BACKDIFF_INCLUSIVE parameter '
+            'LPAREN expression RPAREN',
+            lambda _, parameter, __, inner, ___: BACKDIFF.bind(
+                inner,
+                RANGE.bind(
+                    Literal.create(0, int),
+                    parameter,
+                ),
+            ),
         ),
         ProductionRule(
             'expression_first_n',
@@ -580,19 +587,19 @@ class MinimalGrammar(DynamicGrammar):
             ),
             error_handler=GrammarErrorHandler(
                 error_contexts={
-                    'PARAMETER': "Invalid parameter syntax",
-                    'IDENTIFIER': "Invalid variable name",
-                    'OPERATOR': "Invalid operator usage",
-                    'LOGICAL_OPERATOR': "Invalid logical operator usage",
-                    'CONDITION': "Invalid condition expression",
-                    'PARENTHESIS': "Mismatched parentheses",
-                    'BRACKET': "Mismatched brackets",
-                    'BRACE': "Mismatched braces",
-                    'LITERAL': "Invalid number format",
-                    'FUNCTION': "Invalid function usage",
-                    'DELIMITER': "Invalid delimiter usage",
-                    'ASSIGNMENT': "Invalid assignment syntax",
-                    'RESERVED': "Invalid use of reserved word",
+                    'PARAMETER': 'Invalid parameter syntax',
+                    'IDENTIFIER': 'Invalid variable name',
+                    'OPERATOR': 'Invalid operator usage',
+                    'LOGICAL_OPERATOR': 'Invalid logical operator usage',
+                    'CONDITION': 'Invalid condition expression',
+                    'PARENTHESIS': 'Mismatched parentheses',
+                    'BRACKET': 'Mismatched brackets',
+                    'BRACE': 'Mismatched braces',
+                    'LITERAL': 'Invalid number format',
+                    'FUNCTION': 'Invalid function usage',
+                    'DELIMITER': 'Invalid delimiter usage',
+                    'ASSIGNMENT': 'Invalid assignment syntax',
+                    'RESERVED': 'Invalid use of reserved word',
                 }
             ),
         )

@@ -6,10 +6,12 @@ Postprocessors
 ~~~~~~~~~~~~~~
 Postprocessors are used to transform the tree after it has been parsed.
 """
+
 from typing import Tuple
+
 from .core import (
-    Primitive,
     ExecutionContext,
+    Primitive,
 )
 
 
@@ -27,12 +29,10 @@ def ppr_associative_flatten(
     if not isinstance(tree, Primitive) or tree.is_terminal:
         return tree, context
     children = [
-        ppr_associative_flatten(child, context)[0]
-        for child in tree.parameters
+        ppr_associative_flatten(child, context)[0] for child in tree.parameters
     ]
     to_flatten = [
-        getattr(child, 'name', None) == tree.name
-        and tree.is_associative
+        getattr(child, 'name', None) == tree.name and tree.is_associative
         for child in children
     ]
     children = tuple(_flatten(children, to_flatten))

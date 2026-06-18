@@ -6,28 +6,31 @@ Wilkinson Grammar
 ~~~~~~~~~~~~~~~~~
 Comprehensive grammar for Wilkinson notation supporting statistical modeling.
 """
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Tuple
 
 from gramform.core import (
-    binop_infix,
-    circumfix,
-    enter_group,
-    config_primitives,
-    literal,
-    lift_literal,
-    named_function_bind,
-    parameterised_named_function_bind,
-    unit_lift,
-    unop_prefix,
-    precedence_from_sequence,
     Associativity,
     DynamicGrammar,
     GrammarComponent,
     ProductionRule,
-    Primitive as CorePrimitive,
     Token,
+    binop_infix,
+    circumfix,
+    config_primitives,
+    enter_group,
+    lift_literal,
+    literal,
+    named_function_bind,
+    parameterised_named_function_bind,
+    precedence_from_sequence,
+    unit_lift,
+    unop_prefix,
+)
+from gramform.core import (
+    Primitive as CorePrimitive,
 )
 
 
@@ -43,24 +46,24 @@ Primitive, prim_registry = config_primitives()
 
 
 # Base primitives
-NUMERIC_LITERAL = Primitive("NUMERIC_LITERAL", is_terminal=True)
-APPEND = Primitive("APPEND", is_associative=True)
-REMOVE = Primitive("REMOVE", is_associative=False)
-INTERACTION = Primitive("INTERACTION", is_associative=True)
-NESTED = Primitive("NESTED", is_associative=False)
-POWER = Primitive("POWER", is_associative=True)
-VARIABLE = Primitive("VARIABLE", is_terminal=True)
-NAMED_FUNCTION = Primitive("NAMED_FUNCTION")
-EXECUTE = Primitive("EXECUTE", is_terminal=True)
-VARIABLE_COMPLEMENT = Primitive("VARIABLE_COMPLEMENT", is_terminal=True)
-UNARY_NEGATION = Primitive("UNARY_NEGATION", is_terminal=True)
-PARAMETER = Primitive("PARAMETER", is_terminal=True)
-NAMED_PARAMETER = Primitive("NAMED_PARAMETER", is_terminal=True)
-FUNCTION_PARAMETERS = Primitive("FUNCTION_PARAMETERS", is_associative=True)
-LHS_RHS_STRUCTURE = Primitive("LHS_RHS_STRUCTURE", is_associative=False)
-SUBPARTS_STRUCTURE = Primitive("SUBPARTS_STRUCTURE", is_associative=False)
-RESIDUAL_STRUCTURE = Primitive("RESIDUAL_STRUCTURE", is_associative=False)
-PUSH_FRAME = Primitive("PUSH_FRAME", is_associative=False)
+NUMERIC_LITERAL = Primitive('NUMERIC_LITERAL', is_terminal=True)
+APPEND = Primitive('APPEND', is_associative=True)
+REMOVE = Primitive('REMOVE', is_associative=False)
+INTERACTION = Primitive('INTERACTION', is_associative=True)
+NESTED = Primitive('NESTED', is_associative=False)
+POWER = Primitive('POWER', is_associative=True)
+VARIABLE = Primitive('VARIABLE', is_terminal=True)
+NAMED_FUNCTION = Primitive('NAMED_FUNCTION')
+EXECUTE = Primitive('EXECUTE', is_terminal=True)
+VARIABLE_COMPLEMENT = Primitive('VARIABLE_COMPLEMENT', is_terminal=True)
+UNARY_NEGATION = Primitive('UNARY_NEGATION', is_terminal=True)
+PARAMETER = Primitive('PARAMETER', is_terminal=True)
+NAMED_PARAMETER = Primitive('NAMED_PARAMETER', is_terminal=True)
+FUNCTION_PARAMETERS = Primitive('FUNCTION_PARAMETERS', is_associative=True)
+LHS_RHS_STRUCTURE = Primitive('LHS_RHS_STRUCTURE', is_associative=False)
+SUBPARTS_STRUCTURE = Primitive('SUBPARTS_STRUCTURE', is_associative=False)
+RESIDUAL_STRUCTURE = Primitive('RESIDUAL_STRUCTURE', is_associative=False)
+PUSH_FRAME = Primitive('PUSH_FRAME', is_associative=False)
 
 
 TOKEN_PRECEDENCE = (
@@ -90,10 +93,7 @@ def power_ast(expr, _, power):
     """Construct power AST."""
     return APPEND.bind(
         expr,
-        *[
-            INTERACTION.bind(*([expr] * i))
-            for i in range(2, power.value + 1)
-        ],
+        *[INTERACTION.bind(*([expr] * i)) for i in range(2, power.value + 1)],
     )
 
 
@@ -102,8 +102,10 @@ def dot_named_function_bind(prim: CorePrimitive, *pparams):
     Pattern:
     construct : DOT name LPAREN construct RPAREN
     """
+
     def _inner(_, name, __, expr, ___):
         return prim.bind(name, expr, *pparams)
+
     return _inner
 
 
@@ -112,14 +114,17 @@ def parameterised_dot_named_function_bind(prim: CorePrimitive, *pparams):
     Pattern:
     construct : DOT name LPAREN construct parameters RPAREN
     """
+
     def _inner(_, name, __, expr, parameters, ____):
         return prim.bind(name, expr, parameters, *pparams)
+
     return _inner
 
 
 @dataclass(frozen=True)
 class LiteralTerminalsComponent(GrammarComponent):
     """Component for literal terminals."""
+
     tokens: Tuple[Token, ...] = (
         # Numbers
         Token(
@@ -165,6 +170,7 @@ class LiteralTerminalsComponent(GrammarComponent):
 @dataclass(frozen=True)
 class BasicOperatorsComponent(GrammarComponent):
     """Component for basic operators."""
+
     tokens: Tuple[Token, ...] = (
         # Basic operators
         Token(
@@ -223,7 +229,6 @@ class BasicOperatorsComponent(GrammarComponent):
             associativity=Associativity.RIGHT,
             category='OPERATOR',
         ),
-
         # Parentheses and brackets
         Token(
             'LPAREN',
@@ -237,7 +242,6 @@ class BasicOperatorsComponent(GrammarComponent):
             precedence=from_sequence,
             category='PARENTHESIS',
         ),
-
         # Whitespace
         Token('ignore', ' \t'),
     )
@@ -316,6 +320,7 @@ class BasicOperatorsComponent(GrammarComponent):
 @dataclass(frozen=True)
 class NamesComponent(GrammarComponent):
     """Component for names."""
+
     tokens: Tuple[Token, ...] = (
         Token(
             'NAME',
@@ -360,6 +365,7 @@ class NamesComponent(GrammarComponent):
 @dataclass(frozen=True)
 class ExecutionComponent(GrammarComponent):
     """Component for Python code execution (delimited in curly braces)."""
+
     tokens: Tuple[Token, ...] = (
         Token(
             'EXECUTE',
@@ -421,16 +427,12 @@ class ExecutionComponent(GrammarComponent):
         ProductionRule(
             'parameter_named',
             'parameter : PARAM_SEPARATOR NAME ASSIGN expression',
-            lambda _, name, __, expr: NAMED_PARAMETER.bind(
-                name, expr
-            ),
+            lambda _, name, __, expr: NAMED_PARAMETER.bind(name, expr),
         ),
         ProductionRule(
             'parameter_positional',
             'parameter : PARAM_SEPARATOR expression',
-            lambda _, expr: PARAMETER.bind(
-                expr
-            ),
+            lambda _, expr: PARAMETER.bind(expr),
         ),
         ProductionRule(
             'parameters_lift_parameter',
@@ -440,16 +442,11 @@ class ExecutionComponent(GrammarComponent):
         ProductionRule(
             'parameters_append_parameter',
             'parameters : parameters parameter',
-            lambda left, right: FUNCTION_PARAMETERS.bind(
-                left, right
-            ),
+            lambda left, right: FUNCTION_PARAMETERS.bind(left, right),
         ),
         ProductionRule(
             'factor_named_function_parameterised',
-            (
-                'factor : '
-                'NAME LPAREN expression parameters RPAREN'
-            ),
+            ('factor : NAME LPAREN expression parameters RPAREN'),
             parameterised_named_function_bind(
                 NAMED_FUNCTION,
                 OperationalLevel.TERM,
@@ -469,11 +466,7 @@ class ExecutionComponent(GrammarComponent):
         ),
         ProductionRule(
             'factor_named_function_factor_level_parameterised',
-            (
-                'factor : '
-                'DOT NAME '
-                'LPAREN expression parameters RPAREN'
-            ),
+            ('factor : DOT NAME LPAREN expression parameters RPAREN'),
             parameterised_dot_named_function_bind(
                 NAMED_FUNCTION,
                 OperationalLevel.FACTOR,
@@ -497,6 +490,7 @@ class ExecutionComponent(GrammarComponent):
 @dataclass(frozen=True)
 class StructureComponent(GrammarComponent):
     """Component for structuring formulae."""
+
     tokens: Tuple[Token, ...] = (
         Token(
             'LHS_RHS_SEPARATOR',
@@ -571,6 +565,7 @@ class StructureComponent(GrammarComponent):
 
 class WilkinsonGrammar(DynamicGrammar):
     """Grammar for Wilkinson notation."""
+
     def __init__(self):
         super().__init__(
             start_symbol='formula',
@@ -584,8 +579,8 @@ class WilkinsonGrammar(DynamicGrammar):
         )
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     grammar = WilkinsonGrammar()
-    result = grammar.parse("dog + cat + (rat*dog + cat:dog)^2")
+    result = grammar.parse('dog + cat + (rat*dog + cat:dog)^2')
     print(result)
     assert 0
