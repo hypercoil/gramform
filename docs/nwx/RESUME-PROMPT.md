@@ -115,6 +115,55 @@ though the engine imports `numpy`/`scipy`).
   nwx_reference_engine.example` (and `... -m pytest examples/nwx_reference_engine
   /tests`). The engine is NOT in the nox gate (it is a separate consumer).
 
+**Phase 3 is DONE and verified green (2026-06-18) — first grammar EXTENSION.**
+Random effects (lme4 bar-in-parens) now parse and emit `RandomEffectSpec`.
+- `grammars/nwx/grammar.py` (NEW) — `RanefComponent` adds the token
+  `RANEF_UNCORR (||)` and productions `factor : LPAREN ranef RPAREN`,
+  `ranef : expression (PARTS_SEPARATOR|RANEF_UNCORR) grouping`,
+  `grouping : term`; new AST primitives `RANDOM_EFFECT`/`GROUPING`.
+  **`NwxGrammar`** = the five Wilkinson components + `RanefComponent`.
+  `NwxProcessor` now parses with `NwxGrammar` (was the bare `WilkinsonGrammar`).
+- `grammars/nwx/transform_ranef.py` (NEW, disjoint file, registers into the
+  shared `spec` group via a bottom-import in `transform.py`) — `RANDOM_EFFECT`
+  → `RandomEffectSpec`. Routed structurally OUT of `fixed` into a new
+  `NwxState.random` accumulator (mirrors the Phase-2 `partial`/`noise()`
+  mechanism), consumed by `LHS_RHS` into `ModelSpec.random` (works in frames
+  too). Implicit lme4 intercept reuses the model's own
+  `add_intercept_to_formula` so `0+x`/`x-1` suppress it identically.
+  `_grouping_components` does lme4 nesting (`g1/g2` → `g1`, `g1:g2`);
+  `g1:g2` → ONE interaction grouping factor (`Relation.INTERACTION`), NOT
+  crossing; crossing = multiple bars → multiple specs. `structure`: 1 term →
+  `SCALAR`; ≥2 terms → `UNSTRUCTURED` (`|`) / `DIAGONAL` (`||`).
+  `BackendWarning` (a `UserWarning` subclass) fires for non-scalar structures
+  (v3 §1.1 R2) and nested groupings (R3); scalar single/interaction effects
+  (shipped `reml_fit` R1) and slope-without-fixed-effect are silent.
+- **Conflict gate (R1): `NwxGrammar().conflicts == ()`** — the parts-bar lives
+  at `blocks` level, unreachable from inside `LPAREN expression RPAREN`, so no
+  reduce/reduce (spec §4.2). Added to `test_parser_conflicts.py`. R7: `||`
+  out-ranks `|` by longest match (both function-free string tokens) — pinned by
+  a lexer test; `~|` still lexes correctly.
+- **Verified: 167 passed / 1 xfailed; ruff + format clean; pyright 0 on nwx;
+  conflict gate = 0 (incl. NwxGrammar); coverage 74%.** Engine still 27 passed,
+  M1 example intact; a `(1|g)` formula now parses and the Phase-2 engine
+  rejects it with a helpful `EngineError` (the `random` field is populated).
+
+**Phase-3 hard-won facts (don't rediscover):**
+- A random effect must be routed OUT of the fixed-term stream (like `noise()`),
+  not returned as a term — `RANDOM_EFFECT_impl` appends to `state.random` and
+  returns `()`. `LHS_RHS`/`finalise` consume + clear it so it binds to its block.
+- lme4's implicit random intercept can't be inferred from the post-eval term
+  list (`(x|g)` and `(0+x|g)` both reduce to `[x]`). Reuse
+  `add_intercept_to_formula` on the bar-LHS AST *before* evaluating, so the
+  existing ZERO/`-1` suppression machinery cancels it for `0+x`/`x-1`.
+- Interpret the grouping from the RAW term AST (under the `GROUPING` wrapper) —
+  do NOT dispatch it through the normal term interpreter (that would expand
+  `g1/g2` into design terms `g1 + g1:g2`). `GROUPING_impl` is a defensive raise.
+- The bottom-import in `transform.py`
+  (`import gramform.grammars.nwx.transform_ranef`) is what registers the ranef
+  ops into the shared `INTERPRETERS`; keep it a single-line module import with
+  `# noqa: E402, F401` (ruff reflows a multi-line `from ... import` and breaks
+  the noqa placement).
+
 **Phase 1 is DONE and verified green (2026-06-18):**
 - `grammars/nwx/spec.py` — the full §5 IR: enums (incl. reserved members), the
   closed `TermSource` union (`Lookup|Const|PyExpr|CovariateRef|Referent`,
@@ -215,57 +264,60 @@ If the venv ever breaks, rebuild it **only on /scratch**:
 `uv pip install --python /scratch/gramform-venv/bin/python ply wadler-lindig pydantic formulaic narwhals numpy pandas pytest pytest-cov "coverage[toml]" ruff pyright`
 (set `UV_CACHE_DIR`/`UV_PYTHON_INSTALL_DIR`/`TMPDIR` to `/scratch/...` first).
 
-## YOUR NEXT TASK — Phase 3: random effects (bar-in-parens)
+## YOUR NEXT TASK — Phase 4: smooths + full directive block + error structures
 
-Goal: parse the lme4 bar-in-parens idiom and emit `RandomEffectSpec`. **M**
-sized. This is the **first phase that EXTENDS the grammar** (a new token + a new
-`GrammarComponent`), so the **parser-conflict gate becomes load-bearing** —
-PLY conflicts are a global property of the merged grammar; assert
-`grammar.conflicts == ()` (the `DynamicGrammar.conflicts` capture from Phase 0).
+Goal: GAM/GAMM smooths (`s/te/ti/t2`), the FULL directive block in an
+**exclusive `spec` lexer state**, and error/correlation structures. **M–L**
+sized. Like Phase 3, this EXTENDS the grammar (a `DirectiveComponent` with the
+exclusive state), so the **parser-conflict gate stays load-bearing** — re-assert
+`NwxGrammar().conflicts == ()` after the merge. Phases 4 and 6 are parallelisable
+with each other on disjoint `transform_*`/`covariate` files.
 
-**Files (see `implementation-plan.md` Phase 3 + spec §4.2):**
-- **`grammars/nwx/grammar.py`** (new) — `RanefComponent`: token
-  `RANEF_UNCORR (||)` (function-free string token, so PLY orders it before `|`
-  by descending regex length — assert with a lexer test); productions
-  `factor : LPAREN ranef RPAREN`, `ranef : expression (PARTS_SEPARATOR |
-  RANEF_UNCORR) grouping`. New primitives `RANDOM_EFFECT`, `GROUPING`. **This
-  needs a new `NwxGrammar`** = WilkinsonGrammar components + `RanefComponent`
-  (the Phase-1/2 transform currently parses with the bare `WilkinsonGrammar`,
-  which CANNOT parse `(1|g)` — confirmed: it errors `Unexpected '|'`). Wire the
-  new grammar into `NwxProcessor`.
-- **`grammars/nwx/transform_ranef.py`** (new, disjoint file) — interpreter ops
-  → `RandomEffectSpec(structure ∈ {SCALAR, DIAGONAL, UNSTRUCTURED})`. Rules
-  (spec §4.2 table): `(1|g)`→scalar; `(1+x|g)`/`(x|g)`→unstructured;
-  `(0+x|g)`/`(x-1|g)`→slope-only; `(1+x||g)`→diagonal; `(1|g1/g2)`→**two**
-  specs `(1|g1)+(1|g1:g2)`; `(1|g1:g2)`→`GroupingSpec(relation=INTERACTION)`,
-  one component (NOT crossed); genuine crossing `(1|g1)+(1|g2)`→**multiple**
-  specs. Intercept present unless `0`/`-1` on the bar LHS. Random slope without
-  its fixed effect is legal (informational, not a warning).
-- Backend-awareness WARNING for non-scalar structures (nitrix v3 §1.1 R2–R4).
+**Files (see `implementation-plan.md` Phase 4 + spec §4.3, §4.5):**
+- **`grammars/nwx/transform_smooth.py`** (new, disjoint file) — `s/te/ti/t2`
+  (special ONLY in call position; a bare `s` stays a lookup, R6) →
+  `SmoothSpec` (k, penalty_order, by + `by_kind` factor/continuous, cyclic,
+  tensor, fx, bounds). `bs="cr"/"ps"/...` string → `BasisKind`; `bs="re"/"fs"`
+  with a slope var → `by` (GAMM bridge). Plain `bs`/`ns`/`poly` stay `PyExpr`
+  data-transforms (NOT smooths). These reuse the existing
+  `NAMED_FUNCTION`/parameterised-call productions — `NAMED_FUNCTION_impl` in
+  `transform.py` currently raises `NotImplementedError` on non-`noise()` names;
+  route `s/te/ti/t2` to a smooth accumulator (mirror the `partial`/`random`
+  pattern → `ModelSpec.smooth`).
+- **`grammars/nwx/grammar.py`** (extend) — `DirectiveComponent` with an
+  **EXCLUSIVE** `spec` state (entered on `{{`, exited on `}}`) defining its own
+  `;`/`=`/`:`/`,`/`(`/`)`/name/number/string tokens, so the directive `:`
+  (contrasts) and `=` (key=val) do NOT collide with the default-state
+  `INTERACTION_ONLY (:)`/`ASSIGN (=)`. (`minimaltest`'s `param` state is the
+  pattern but it is *inclusive* — make `nwx`'s **exclusive**.) This RETIRES the
+  Phase-1 textual `{{...}}` split in `transform.py` (`_split_directives` /
+  `_DIRECTIVE_RE`) in favour of real productions.
+- **`directives.py`** (extend to the full key set) → `FamilySpec` /
+  `EstimationSpec` / `ErrorSpec` / `InferenceSpec` / `ContrastSpec`;
+  `correlation=ar1(time|g)` → `ErrorSpec`. Backend-awareness `BackendWarning`s
+  (reuse the Phase-3 class) for v3-gated kernels (families beyond 3, error
+  structures, dof, robust se).
 
-**Gate (R1 in the risk register):** the §4.2 analysis says bar-in-parens is
-conflict-free (the parts-bar lives at `blocks` level, unreachable from inside
-`LPAREN expression RPAREN`); **assert 0 conflicts** on the merged grammar. If a
-conflict appears, the documented fallback is a functional `re(1+x, g)` form.
+**Tests:** smooth param mapping incl. `by_kind`, cyclic `bounds`, `bs="re"`
+slope→`by`; `s(age, by=dx)` without the `dx` main effect → WARNING; the
+directive-scoping matrix (node vs graph); **exclusive-state isolation of `:`/`=`**
+(a directive `:`/`=` must not leak into the term algebra and vice-versa);
+longest-match lexer tests; re-assert the conflict gate. **`y ~ s` (bare lookup)
+vs `y ~ s(x)` (smooth)** pins R6.
 
-**Tests:** each surface → expected `RandomEffectSpec`; nesting/crossing; the
-conflict gate on the new grammar; `structure` correctness; **`y ~ s` (bare `s`
-lookup) vs `y ~ (…|g)` grouping** and bare `g` lookup vs `(…|g)` — reserved
-names are special only in call/grouping position.
-
-> Phases 3 / 4 (smooths + full directives + exclusive `{{}}` lexer state) / 6
-> (covariate→term lowering) are parallelisable on disjoint `transform_*` /
-> `covariate` files; the conflict gate runs on each integration merge. Phase 5
-> (residualise modes + multi-level `>>`) depends on 4. Phase 7 (validate.py +
-> BIDS-SM importer) is last. The reference engine extends in lockstep as kernels
-> are surfaced (random effects → `lme_fit` structure-dispatch, nitrix v3 §1.1).
+> Phase 5 (residualise modes + multi-level `>>`) depends on Phase 4 (directive
+> `level`/`combine`) + the residualise primitive. Phase 6 (covariate→term
+> lowering, disjoint `covariate.py`) parallels 4. Phase 7 (validate.py + BIDS-SM
+> importer) is last. The reference engine extends in lockstep as kernels are
+> surfaced (smooths → `gam_fit`; random effects → `lme_fit` structure-dispatch,
+> nitrix v3 §1.1 — currently the Phase-2 engine rejects populated `random`).
 
 ## Roadmap (phases 1–7) & milestones
 
 ```
-Phase 0 ✅ ─▶ 1 (IR+spec) ─▶ 2 (runnable slice) ─┬─▶ 3 (random effects) ─┐
-                                                 ├─▶ 4 (smooths+directives)┼─▶ 5 ─▶ 7
-                                                 └─▶ 6 (covariate prog) ───┘
+Phase 0 ✅ ─▶ 1 ✅ ─▶ 2 ✅ (runnable slice) ─┬─▶ 3 ✅ (random effects) ─┐
+                                            ├─▶ 4 (smooths+directives)─┼─▶ 5 ─▶ 7
+                                            └─▶ 6 (covariate prog) ────┘
 ```
 - **M1** (end P2): nwx usable, formula→corrected stat-map via the external
   reference engine. **M2** (end P4): GAM/GLMM formulae + full directives.

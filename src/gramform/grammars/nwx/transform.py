@@ -41,6 +41,7 @@ from gramform.core import (
     withCacheSubcontext,
 )
 from gramform.grammars.nwx.directives import DirectiveSet, parse_directives
+from gramform.grammars.nwx.grammar import NwxGrammar
 from gramform.grammars.nwx.spec import (
     Combine,
     Const,
@@ -52,13 +53,13 @@ from gramform.grammars.nwx.spec import (
     ModelNode,
     ModelSpec,
     PyExpr,
+    RandomEffectSpec,
     Referent,
     ResidualiseSpec,
     ResponseSpec,
     TermSource,
     TermSpec,
 )
-from gramform.grammars.wilkinson.grammar import WilkinsonGrammar
 from gramform.grammars.wilkinson.transform import ppr_add_intercept
 from gramform.postprocessors import (
     ppr_associative_flatten,
@@ -92,16 +93,20 @@ class _Block:
     rhs: tuple[TermSpec, ...]
     residualise: bool = False
     partial: tuple[TermSpec, ...] = ()
+    random: tuple[RandomEffectSpec, ...] = ()
 
 
 class NwxState(TypedState):
     """Typed result slot (``eval``) plus parse-wide accumulators. ``deps``
     collects frame sub-models (emitted as extra graph nodes); ``partial``
     accumulates ``noise()`` in-model nuisance terms for the enclosing block;
-    ``directives`` holds the parsed ``{{ ... }}`` block for the finaliser."""
+    ``random`` accumulates ``(...|g)`` random-effect specs for the enclosing
+    block; ``directives`` holds the parsed ``{{ ... }}`` block for the
+    finaliser."""
 
     deps: tuple[ModelNode, ...] = ()
     partial: tuple[TermSpec, ...] = ()
+    random: tuple[RandomEffectSpec, ...] = ()
     directives: DirectiveSet | None = None
 
 
@@ -384,11 +389,15 @@ def LHS_RHS_STRUCTURE_impl(node: Primitive, context: NwxContext) -> NwxContext:
     lhs = to_terms(_coerce(context.get_result()))
     context = rhs_expr(context)
     rhs = to_terms(_coerce(context.get_result()))
-    # Consume any noise() partials accumulated while evaluating this RHS, so
-    # they bind to this block and do not leak to an enclosing one.
+    # Consume any noise() partials and (...|g) random effects accumulated while
+    # evaluating this RHS, so they bind to this block and do not leak to an
+    # enclosing one.
     partial = context.state.partial
-    context = context.update_state(partial=())
-    return context.with_result(_Block(lhs=lhs, rhs=rhs, partial=partial))
+    random = context.state.random
+    context = context.update_state(partial=(), random=())
+    return context.with_result(
+        _Block(lhs=lhs, rhs=rhs, partial=partial, random=random)
+    )
 
 
 def RESIDUAL_STRUCTURE_impl(
@@ -458,7 +467,12 @@ def _block_to_modelspec(block: _Block) -> ModelSpec:
                 ),
             ),
         )
-    return ModelSpec(response=response, fixed=block.rhs, partial=block.partial)
+    return ModelSpec(
+        response=response,
+        fixed=block.rhs,
+        partial=block.partial,
+        random=block.random,
+    )
 
 
 def _apply_directives(
@@ -498,6 +512,7 @@ def finalise_hook(context: NwxContext) -> NwxContext:
             response=ResponseSpec(terms=()),
             fixed=to_terms(_coerce(result)),
             partial=context.state.partial,
+            random=context.state.random,
         )
     spec = _apply_directives(spec, directives)
     root = ModelNode(
@@ -542,6 +557,11 @@ INTERPRETERS.register_operation(
 )
 INTERPRETERS.register_operation('build', 'PUSH_FRAME', PUSH_FRAME_impl)
 
+# Register the disjoint feature-family interpreters into the shared ``spec``
+# group (spec §12). Imported here, after the dispatch + helpers above are
+# defined, so the module-level registrations resolve their imports from this
+# module -- an intentional bottom import for its side effect.
+import gramform.grammars.nwx.transform_ranef  # noqa: E402, F401
 
 _DIRECTIVE_RE = re.compile(r'\{\{(.*?)\}\}\s*$', re.DOTALL)
 
@@ -564,7 +584,7 @@ class NwxProcessor:
 
     def __init__(self) -> None:
         self._inner = TransformProcessor(
-            grammar=WilkinsonGrammar(),
+            grammar=NwxGrammar(),
             preprocessors=(),
             postprocessors=(
                 ppr_add_intercept,

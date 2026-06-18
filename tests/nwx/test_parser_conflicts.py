@@ -12,9 +12,10 @@ the ``conflicts`` property. This gate guards the nwx grammar extensions
 import pytest
 
 from gramform.grammars.minimaltest.grammar import MinimalGrammar
+from gramform.grammars.nwx.grammar import NwxGrammar
 from gramform.grammars.wilkinson.grammar import WilkinsonGrammar
 
-GRAMMARS = [WilkinsonGrammar, MinimalGrammar]
+GRAMMARS = [WilkinsonGrammar, MinimalGrammar, NwxGrammar]
 
 
 @pytest.mark.parametrize(
