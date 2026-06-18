@@ -85,19 +85,23 @@ class NwxError(ValueError):
 class _Block:
     """An interpreted formula body, before model assembly. ``lhs`` is the
     response (``~``) or the residualisation target (``~|``); ``rhs`` is the
-    design (or the noise set, when ``residualise``)."""
+    design (or the noise set, when ``residualise``); ``partial`` holds in-model
+    nuisance terms routed from ``noise()`` on a normal RHS."""
 
     lhs: tuple[TermSpec, ...]
     rhs: tuple[TermSpec, ...]
     residualise: bool = False
+    partial: tuple[TermSpec, ...] = ()
 
 
 class NwxState(TypedState):
     """Typed result slot (``eval``) plus parse-wide accumulators. ``deps``
-    collects frame sub-models (emitted as extra graph nodes); ``directives``
-    holds the parsed ``{{ ... }}`` block for the finaliser."""
+    collects frame sub-models (emitted as extra graph nodes); ``partial``
+    accumulates ``noise()`` in-model nuisance terms for the enclosing block;
+    ``directives`` holds the parsed ``{{ ... }}`` block for the finaliser."""
 
     deps: tuple[ModelNode, ...] = ()
+    partial: tuple[TermSpec, ...] = ()
     directives: DirectiveSet | None = None
 
 
@@ -346,10 +350,24 @@ def NESTED_impl(node: Primitive, context: NwxContext) -> NwxContext:
     return context.with_result(to_terms(terms))
 
 
+#: In-model nuisance markers (special only in call position). ``signal()`` and
+#: residualisation-context ``noise()`` routing arrive in Phase 5.
+_PARTIAL_MARKERS = frozenset({'noise', 'nuisance'})
+
+
 def NAMED_FUNCTION_impl(node: Primitive, context: NwxContext) -> NwxContext:
-    # Smooths (`s`/`te`/...) and data-transform functions arrive in Phase 4;
-    # Phase 1 deliberately does not interpret call-position names.
     name = node.parameters[0]
+    if name in _PARTIAL_MARKERS:
+        # `noise(...)` on a normal RHS marks in-model nuisance: the wrapped
+        # terms are partialled out of the reported estimands but not reported
+        # (FWL), so they route structurally to `ModelSpec.partial`, not
+        # `fixed`. The call contributes no fixed terms.
+        expr = node.parameters[1]
+        context = expr(context)
+        terms = to_terms(_coerce(context.get_result()))
+        context = context.update_state(partial=context.state.partial + terms)
+        return context.with_result(())
+    # Smooths (`s`/`te`/...) and data-transform functions arrive in Phase 4.
     raise NotImplementedError(
         f'function-call terms ({name}(...)) are not supported until Phase 4'
     )
@@ -366,7 +384,11 @@ def LHS_RHS_STRUCTURE_impl(node: Primitive, context: NwxContext) -> NwxContext:
     lhs = to_terms(_coerce(context.get_result()))
     context = rhs_expr(context)
     rhs = to_terms(_coerce(context.get_result()))
-    return context.with_result(_Block(lhs=lhs, rhs=rhs))
+    # Consume any noise() partials accumulated while evaluating this RHS, so
+    # they bind to this block and do not leak to an enclosing one.
+    partial = context.state.partial
+    context = context.update_state(partial=())
+    return context.with_result(_Block(lhs=lhs, rhs=rhs, partial=partial))
 
 
 def RESIDUAL_STRUCTURE_impl(
@@ -436,7 +458,7 @@ def _block_to_modelspec(block: _Block) -> ModelSpec:
                 ),
             ),
         )
-    return ModelSpec(response=response, fixed=block.rhs)
+    return ModelSpec(response=response, fixed=block.rhs, partial=block.partial)
 
 
 def _apply_directives(
@@ -475,6 +497,7 @@ def finalise_hook(context: NwxContext) -> NwxContext:
         spec = ModelSpec(
             response=ResponseSpec(terms=()),
             fixed=to_terms(_coerce(result)),
+            partial=context.state.partial,
         )
     spec = _apply_directives(spec, directives)
     root = ModelNode(

@@ -173,6 +173,22 @@ def test_directives_applied(process):
     assert spec.inference.n_perm == 200
 
 
+def test_noise_routes_to_partial(process):
+    # `noise(...)` on a normal RHS marks in-model nuisance: routed to
+    # ModelSpec.partial (reported-coefficient FWL), kept out of `fixed`.
+    g = process('thk ~ dx + sex + noise(meanFD)')
+    spec = g.nodes[0].spec
+    assert spec.fixed == (INTERCEPT, L('dx'), L('sex'))
+    assert spec.partial == (L('meanFD'),)
+
+
+def test_noise_multiple_terms_to_partial(process):
+    g = process('y ~ x + noise(a + b)')
+    spec = g.nodes[0].spec
+    assert spec.fixed == (INTERCEPT, L('x'))
+    assert spec.partial == (L('a'), L('b'))
+
+
 def test_top_level_residualise(process):
     g = process('bold ~| rps + wm')
     spec = g.nodes[0].spec

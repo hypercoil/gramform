@@ -84,6 +84,37 @@ vs ModelMatrix): **a model > a design matrix.** The interpreter emits a typed
   — `docs/nwx/implementation-plan.md`
 - `(MAINT) nwx Phase 0: remove pre-ply -ops modules; modernise dev suite`
 
+**Phase 2 is DONE and verified green (2026-06-18) — M1 reached: nwx is
+usable.** A real reference engine lives **outside `gramform`** at
+`examples/nwx_reference_engine/` (preserving the firewall — it is never
+imported by `gramform`, so the import-firewall subprocess stays clean even
+though the engine imports `numpy`/`scipy`).
+- nitrix is NOT importable here (needs `jax`; only a source checkout exists at
+  `/root/capsule/code/nitrix`) and statsmodels is absent — so per the plan's
+  allowance the engine uses a **numpy/scipy** path, pinned against independent
+  linear-algebra oracles (`np.linalg.lstsq`, `scipy.stats.linregress`, a
+  QR-based OLS, an FWL hand-derivation).
+- `engine.run(formula, data, imaging, adjacency=…)` → `{contrast: Result}`:
+  parses via the nwx processor, dispatches structurally on populated IR fields,
+  and errors helpfully on unsupported IR (non-Gaussian, random/smooth/
+  residualise, multi-node, etc.). `materialise.py` (design + treatment coding +
+  partial), `glm.py` (vectorised OLS + t/F, F=t² verified), `inference.py`
+  (Freedman–Lane permutation: voxel/cluster_extent/cluster_mass/TFCE max-stat
+  FWE + FDR-BH/Bonferroni), `datasets.py`, `example.py`, `README.md`, `tests/`.
+- **Pure spec-layer addition this phase:** `noise()`/`nuisance()` on a normal
+  RHS now routes (structurally, via a `NwxState.partial` accumulator consumed by
+  `LHS_RHS`) to `ModelSpec.partial` — `NAMED_FUNCTION_impl` no longer raises on
+  those names (still raises on smooths/other calls → Phase 4). `signal()` and
+  residualise-context `noise()` remain Phase 5.
+- **Acceptance gate met:** `thk ~ dx + sex + noise(meanFD) {{ contrasts: dx=dx
+  (t); inference=permutation(tfce, n=…) }}` runs formula→corrected map; the
+  worked example recovers the true cluster (12/12 vertices, 0 false positives).
+- **Verified:** gramform 138 passed/1 xfailed (firewall + conflict gates green),
+  ruff+format clean, pyright 0 on nwx, coverage ≥68; engine 27 passed, ruff
+  clean. Run the engine: `PYTHONPATH=src:examples python -m
+  nwx_reference_engine.example` (and `... -m pytest examples/nwx_reference_engine
+  /tests`). The engine is NOT in the nox gate (it is a separate consumer).
+
 **Phase 1 is DONE and verified green (2026-06-18):**
 - `grammars/nwx/spec.py` — the full §5 IR: enums (incl. reserved members), the
   closed `TermSource` union (`Lookup|Const|PyExpr|CovariateRef|Referent`,
@@ -184,52 +215,50 @@ If the venv ever breaks, rebuild it **only on /scratch**:
 `uv pip install --python /scratch/gramform-venv/bin/python ply wadler-lindig pydantic formulaic narwhals numpy pandas pytest pytest-cov "coverage[toml]" ruff pyright`
 (set `UV_CACHE_DIR`/`UV_PYTHON_INSTALL_DIR`/`TMPDIR` to `/scratch/...` first).
 
-## YOUR NEXT TASK — Phase 2: runnable vertical slice (formula → results)
+## YOUR NEXT TASK — Phase 3: random effects (bar-in-parens)
 
-Goal: prove the contract end-to-end on the single most-used model —
-**Gaussian mass-univariate GLM + confounds + t/F contrast + permutation/FDR
-inference** — all on already-✅ nitrix kernels. **M–L** sized. This is the
-first phase that touches numerics, so it MUST live **outside `gramform`** to
-preserve the jax/nitrix firewall.
+Goal: parse the lme4 bar-in-parens idiom and emit `RandomEffectSpec`. **M**
+sized. This is the **first phase that EXTENDS the grammar** (a new token + a new
+`GrammarComponent`), so the **parser-conflict gate becomes load-bearing** —
+PLY conflicts are a global property of the merged grammar; assert
+`grammar.conflicts == ()` (the `DynamicGrammar.conflicts` capture from Phase 0).
 
-**Where it lives:** a reference engine **outside `gramform`** —
-`examples/nwx_reference_engine/` (or a sibling `nwx-engine` package) that
-imports the IR from `gramform.grammars.nwx.spec` and the numerics from `nitrix`
-(or a `numpy`/`statsmodels` fallback if nitrix is unavailable in-env). A *real*
-runner, not the Phase-7 dry-run dispatcher.
+**Files (see `implementation-plan.md` Phase 3 + spec §4.2):**
+- **`grammars/nwx/grammar.py`** (new) — `RanefComponent`: token
+  `RANEF_UNCORR (||)` (function-free string token, so PLY orders it before `|`
+  by descending regex length — assert with a lexer test); productions
+  `factor : LPAREN ranef RPAREN`, `ranef : expression (PARTS_SEPARATOR |
+  RANEF_UNCORR) grouping`. New primitives `RANDOM_EFFECT`, `GROUPING`. **This
+  needs a new `NwxGrammar`** = WilkinsonGrammar components + `RanefComponent`
+  (the Phase-1/2 transform currently parses with the bare `WilkinsonGrammar`,
+  which CANNOT parse `(1|g)` — confirmed: it errors `Unexpected '|'`). Wire the
+  new grammar into `NwxProcessor`.
+- **`grammars/nwx/transform_ranef.py`** (new, disjoint file) — interpreter ops
+  → `RandomEffectSpec(structure ∈ {SCALAR, DIAGONAL, UNSTRUCTURED})`. Rules
+  (spec §4.2 table): `(1|g)`→scalar; `(1+x|g)`/`(x|g)`→unstructured;
+  `(0+x|g)`/`(x-1|g)`→slope-only; `(1+x||g)`→diagonal; `(1|g1/g2)`→**two**
+  specs `(1|g1)+(1|g1:g2)`; `(1|g1:g2)`→`GroupingSpec(relation=INTERACTION)`,
+  one component (NOT crossed); genuine crossing `(1|g1)+(1|g2)`→**multiple**
+  specs. Intercept present unless `0`/`-1` on the bar LHS. Random slope without
+  its fixed effect is legal (informational, not a warning).
+- Backend-awareness WARNING for non-scalar structures (nitrix v3 §1.1 R2–R4).
 
-**Tasks (see `implementation-plan.md` Phase 2):**
-1. Engine consumes a one-node `ModelGraph`, materialises the `CovariateProgram`
-   (Phase-1 subset) against a covariate dataframe, assembles `X`, binds the
-   imaging array's mass axis.
-2. Dispatch: `fixed`-only Gaussian → `glm_fit`; `partial` present → residualise
-   then fit (FWL); `ResidualiseSpec(AGGRESSIVE)` → `linalg.residualise`.
-3. Contrasts → `t_contrast`/`f_contrast`; `inference=permutation(tfce|cluster|
-   voxel)` → `permutation_test`; `correction=fdr/bonferroni` → `fdr_bh`/`bonferroni`.
-4. A worked end-to-end example (a small vertexwise dataset): formula string →
-   stat map + corrected p-map.
+**Gate (R1 in the risk register):** the §4.2 analysis says bar-in-parens is
+conflict-free (the parts-bar lives at `blocks` level, unreachable from inside
+`LPAREN expression RPAREN`); **assert 0 conflicts** on the merged grammar. If a
+conflict appears, the documented fallback is a functional `re(1+x, g)` form.
 
-**Acceptance gate (M1 — nwx usable):** `thk ~ dx + sex + noise(meanFD)
-{{ contrasts: dx=dx (t); inference=permutation(tfce, n=…) }}` runs
-formula→corrected-map; reference-engine outputs match a direct `nitrix`/
-`statsmodels` call on the same design (oracle).
+**Tests:** each surface → expected `RandomEffectSpec`; nesting/crossing; the
+conflict gate on the new grammar; `structure` correctness; **`y ~ s` (bare `s`
+lookup) vs `y ~ (…|g)` grouping** and bare `g` lookup vs `(…|g)` — reserved
+names are special only in call/grouping position.
 
-> ⚠️ **Phase-2 needs two things Phase 1 deliberately deferred** — wire them in
-> the engine path (or extend the Phase-1 interpreter minimally, keeping it
-> pure):
-> - **`noise()` routing → `ModelSpec.partial`.** Phase 1 raises
->   `NotImplementedError` on any `NAME(...)` call (`NAMED_FUNCTION_impl`); the
->   slice's `noise(meanFD)` must route the wrapped terms into `partial` (this is
->   the Phase-5 `transform_struct.py` job, but the slice needs the in-model
->   `noise()` subset early). Keep `signal()`/non-aggressive for Phase 5.
-> - **Covariate→term lowering.** `covariate.py` ops exist but are NOT wired into
->   the interpreter; the slice's confounds (`meanFD` is a plain `Lookup`, fine)
->   don't strictly need shorthands, but if the example uses `rps`/`dd_`/`^^`,
->   add the covariate-program emission (full vocabulary is Phase 6).
-
-After Phase 2, Phases 3 (random effects) / 4 (smooths+directives) / 6
-(covariate program) are parallelisable on disjoint files; the parser-conflict
-gate runs on each integration merge.
+> Phases 3 / 4 (smooths + full directives + exclusive `{{}}` lexer state) / 6
+> (covariate→term lowering) are parallelisable on disjoint `transform_*` /
+> `covariate` files; the conflict gate runs on each integration merge. Phase 5
+> (residualise modes + multi-level `>>`) depends on 4. Phase 7 (validate.py +
+> BIDS-SM importer) is last. The reference engine extends in lockstep as kernels
+> are surfaced (random effects → `lme_fit` structure-dispatch, nitrix v3 §1.1).
 
 ## Roadmap (phases 1–7) & milestones
 
