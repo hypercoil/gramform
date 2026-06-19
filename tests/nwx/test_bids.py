@@ -12,13 +12,18 @@ model.json -> IR -> static report + planned nitrix calls pipeline.
 """
 
 import json
+import warnings
 
 import pytest
 
 from gramform.grammars.nwx.bids import (
+    BidsExportError,
     BidsImportError,
+    export_bids_file,
+    export_bids_model,
     import_bids_file,
     import_bids_model,
+    validate_exportable,
 )
 from gramform.grammars.nwx.spec import (
     INTERCEPT,
@@ -26,11 +31,13 @@ from gramform.grammars.nwx.spec import (
     FactorSpec,
     Level,
     Lookup,
+    Severity,
     TermSpec,
 )
 from gramform.grammars.nwx.spec import (
     Test as _Test,  # aliased so pytest does not collect the `Test*` enum
 )
+from gramform.grammars.nwx.transform import get_processor
 from gramform.grammars.nwx.validate import validate
 
 from .dryrun import dry_run
@@ -38,6 +45,17 @@ from .dryrun import dry_run
 
 def L(name: str) -> TermSpec:
     return TermSpec((FactorSpec(Lookup(name)),))
+
+
+@pytest.fixture(scope='module')
+def process():
+    return get_processor()
+
+
+def parse(process, formula: str):
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        return process(formula)
 
 
 TWO_LEVEL = {
@@ -240,3 +258,185 @@ def test_edge_without_endpoints_errors():
 def test_non_object_document_errors():
     with pytest.raises(BidsImportError):
         import_bids_model([1, 2, 3])
+
+
+# ===========================================================================
+# export direction: ModelGraph -> BIDS Stats Models (strict)
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# round-trip + the document shape
+# ---------------------------------------------------------------------------
+
+
+def test_import_export_round_trips():
+    # import -> export -> import is identity on the representable subset.
+    g = import_bids_model(TWO_LEVEL)
+    assert import_bids_model(export_bids_model(g, name='two-level')) == g
+
+
+def test_export_is_json_idempotent():
+    g = import_bids_model(TWO_LEVEL)
+    doc1 = export_bids_model(g)
+    doc2 = export_bids_model(import_bids_model(doc1))
+    assert doc1 == doc2
+
+
+def test_export_document_shape():
+    doc = export_bids_model(import_bids_model(TWO_LEVEL), name='m')
+    assert doc['Name'] == 'm'
+    assert doc['BIDSModelVersion'] == '1.0.0'
+    assert [n['Name'] for n in doc['Nodes']] == ['subject', 'dataset']
+
+
+def test_export_node_level_type_and_design():
+    doc = export_bids_model(import_bids_model(TWO_LEVEL))
+    subject, dataset = doc['Nodes']
+    assert subject['Level'] == 'Subject'  # capitalised back
+    assert subject['Model'] == {'Type': 'glm', 'X': ['1', 'trial_type']}
+    assert subject['GroupBy'] == ['subject']
+    # Combine.MIXED -> Type 'meta' (the inverse of the importer)
+    assert dataset['Model']['Type'] == 'meta'
+
+
+def test_export_contrast_round_trips_fields():
+    subject = export_bids_model(import_bids_model(TWO_LEVEL))['Nodes'][0]
+    (contrast,) = subject['Contrasts']
+    assert contrast == {
+        'Name': 'effect',
+        'ConditionList': ['trial_type'],
+        'Weights': [1.0],
+        'Test': 't',
+    }
+
+
+def test_export_edge_carry_becomes_filter_contrast():
+    (edge,) = export_bids_model(import_bids_model(TWO_LEVEL))['Edges']
+    assert edge['Source'] == 'subject' and edge['Destination'] == 'dataset'
+    assert edge['Filter'] == {'contrast': ['effect']}
+
+
+def test_export_multi_value_filter_round_trips():
+    doc = {
+        'Nodes': [
+            {'Level': 'Run', 'Name': 'a', 'GroupBy': [], 'Model': {}},
+            {'Level': 'Subject', 'Name': 'b', 'GroupBy': [], 'Model': {}},
+        ],
+        'Edges': [
+            {
+                'Source': 'a',
+                'Destination': 'b',
+                'Filter': {'session': ['pre', 'post'], 'contrast': ['c']},
+            }
+        ],
+    }
+    g = import_bids_model(doc)
+    (edge,) = export_bids_model(g)['Edges']
+    assert edge['Filter'] == {'session': ['pre', 'post'], 'contrast': ['c']}
+
+
+def test_export_to_file(tmp_path):
+    g = import_bids_model(TWO_LEVEL)
+    path = tmp_path / 'out.json'
+    export_bids_file(g, path, name='two-level')
+    assert import_bids_file(path) == g
+
+
+# ---------------------------------------------------------------------------
+# the GLM-graph subset exports; multi-level pipelines export
+# ---------------------------------------------------------------------------
+
+
+def test_native_formula_exports(process):
+    doc = export_bids_model(
+        parse(process, 'y ~ x + z {{ contrasts: b = x (t) }}')
+    )
+    (node,) = doc['Nodes']
+    assert node['Model']['X'] == ['1', 'x', 'z']
+    assert node['Contrasts'][0]['Name'] == 'b'
+
+
+def test_interaction_renders_as_colon(process):
+    (node,) = export_bids_model(parse(process, 'y ~ a*b'))['Nodes']
+    assert node['Model']['X'] == ['1', 'a', 'b', 'a:b']
+
+
+def test_pipeline_exports_nodes_and_edge(process):
+    doc = export_bids_model(
+        parse(process, '[a ~ b] >> [. ~ 1 {{ combine=mixed }}]')
+    )
+    assert [n['Model']['Type'] for n in doc['Nodes']] == ['glm', 'meta']
+    assert len(doc['Edges']) == 1
+
+
+def test_dropped_inference_does_not_block_export(process):
+    # node-level inference is out of BIDS-SM scope -> dropped, not refused.
+    doc = export_bids_model(
+        parse(
+            process,
+            'y ~ x {{ contrasts: c = x (t); inference=permutation(tfce) }}',
+        )
+    )
+    (node,) = doc['Nodes']
+    assert node['Contrasts'][0]['Name'] == 'c'
+    assert 'Inference' not in node and 'Inference' not in doc
+
+
+# ---------------------------------------------------------------------------
+# strict refusal of unrepresentable constructs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    'formula,needle',
+    [
+        ('y ~ x + (1|g)', 'random effects'),
+        ('y ~ s(age)', 'smooth'),
+        ('bold ~| n', 'residualisation'),
+        ('y ~ x + noise(z)', 'partial'),
+        ('y ~ x {{ family=binomial }}', 'Gaussian/identity'),
+        ('y ~ x {{ correlation=ar1(t|g) }}', 'error structure'),
+    ],
+)
+def test_strict_refuses_unrepresentable(process, formula, needle):
+    with pytest.raises(BidsExportError, match=needle):
+        export_bids_model(parse(process, formula))
+
+
+def test_refusal_message_names_the_node(process):
+    g = parse(process, 'y ~ x + [bold ~| n]')
+    with pytest.raises(BidsExportError, match=r'\[frame0\]'):
+        export_bids_model(g)
+
+
+def test_frame_referent_design_is_refused(process):
+    # `y ~ x + [z ~ w]` lifts a frame fit (`_hat`) into the design -> no plain
+    # column form -> refused.
+    g = parse(process, 'y ~ x + [z ~ w]')
+    with pytest.raises(BidsExportError, match='plain column'):
+        export_bids_model(g)
+
+
+# ---------------------------------------------------------------------------
+# validate_exportable: the static check behind the raise
+# ---------------------------------------------------------------------------
+
+
+def test_validate_exportable_clean_is_empty(process):
+    assert validate_exportable(parse(process, 'y ~ x + z')) == ()
+
+
+def test_validate_exportable_flags_each_node(process):
+    diags = validate_exportable(parse(process, 'y ~ s(age) + (1|g)'))
+    assert diags  # at least the smooth + random
+    assert all(d.severity is Severity.ERROR for d in diags)
+    assert all(d.code == 'bids-export-unrepresentable' for d in diags)
+
+
+def test_imported_then_validated_then_exported(process):
+    # the full bridge: model.json -> IR -> (clean) -> model.json.
+    g = import_bids_model(TWO_LEVEL)
+    assert validate_exportable(g) == ()
+    assert validate(g) == ()
+    assert export_bids_model(g)['Nodes']

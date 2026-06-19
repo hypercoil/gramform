@@ -364,9 +364,10 @@ If the venv ever breaks, rebuild it **only on /scratch**:
 ## PROJECT COMPLETE — all phases done (M1–M4) ✅
 
 **Phases 0–7 are all DONE and verified green (M1–M4): the nwx DSL is validated,
-contract-proven, and BIDS-SM importable.** Final state on branch `nwx`: **317
-passed / 1 xfailed; ruff + format clean; pyright 0 on nwx; parser-conflict gate
-= 0; coverage 78% (floor 78); reference engine 27 passed; firewall green.**
+contract-proven, and a two-way BIDS-SM bridge (import + strict export).** Final
+state on branch `nwx`: **340 passed / 1 xfailed; ruff + format clean; pyright 0
+on nwx; parser-conflict gate = 0; coverage ~79% (floor 78); reference engine 27
+passed; firewall green.**
 
 > ⚠️ **Provenance (2nd crash).** A Code Ocean crash on 2026-06-19 rolled git back
 > to `48a830d` (end of Phase 5). Phases 6, 7a–7d, the `minimaltest→dataframe`
@@ -388,13 +389,24 @@ executable (`dry_run(graph)` emits the intended nitrix calls without importing
 nitrix; round-trips §11). **Phase 7d (`bids.py`):** the read-direction BIDS-SM
 importer (`model.json` → `ModelGraph`, feeding `validate` + `dry_run`).
 
-**Optional follow-ups (not roadmap-blocking):** BIDS-SM *export*
-(`ModelGraph` → `model.json`); the full *inline* confound vocab (`dd_`/`^^`/`:::`
-inside a formula via a `{{ confounds=… }}` directive); `Node.Transformations` →
-`CovariateProgram` (general BIDS ops, needs a transform→op table); the reference
-engine in lockstep as nitrix kernels surface (`gam_fit`/`lme_fit`/
-`partial_residualise`/FLAME); and tests for (or retirement of) the legacy
-`grammars/dataframe` narwhals materialiser (~31%) to climb the coverage floor.
+**BIDS-SM export — DONE.** `export_bids_model(graph)` / `export_bids_file` in
+`bids.py` make it a two-way bridge: **strict** export of the representable
+subset (multi-level Gaussian/identity GLM graph → `Nodes`+`X`+`Contrasts`+cope
+`Edges`), refusing (`BidsExportError`, via `validate_exportable`) any
+random/smooth/residualise/partial/non-Gaussian/error-structure/non-plain-column
+construct rather than silently lowering it. `import→export→import` is identity
+on the subset. 23 export tests.
+
+**Optional follow-ups (not roadmap-blocking):** a `Model.Formula` exporter (so
+interactions/`PyExpr` designs export as a formula instead of being refused) and
+a lenient export mode (drop-and-warn instead of raise); the full *inline*
+confound vocab (`dd_`/`^^`/`:::` inside a formula via a `{{ confounds=… }}`
+directive); `Node.Transformations` → `CovariateProgram` (general BIDS ops, needs
+a transform→op table); the reference engine in lockstep as nitrix kernels
+surface (`gam_fit`/`lme_fit`/`partial_residualise`/FLAME); validating exported
+JSON against the live `bsmschema` models in tests; and tests for (or retirement
+of) the legacy `grammars/dataframe` narwhals materialiser (~31%) to climb the
+coverage floor.
 
 ## Roadmap (phases 1–7) & milestones
 
