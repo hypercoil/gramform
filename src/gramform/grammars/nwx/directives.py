@@ -31,6 +31,7 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Literal, TypeVar, cast, get_args
 
+from gramform.grammars.nwx import backend
 from gramform.grammars.nwx.spec import (
     BackendWarning,
     Combine,
@@ -73,14 +74,6 @@ _CORRECTIONS: tuple[str, ...] = get_args(_Correction)
 
 #: Surface aliases for enhancement names.
 _ENHANCEMENT_ALIASES: dict[str, str] = {'cluster': 'cluster_extent'}
-
-#: Families / links whose nitrix kernel ships in v1 (the rest warn, spec §7).
-_SHIPPED_FAMILIES: frozenset[Family] = frozenset(
-    {Family.GAUSSIAN, Family.BINOMIAL, Family.POISSON}
-)
-_SHIPPED_LINKS: frozenset[Link] = frozenset(
-    {Link.IDENTITY, Link.LOG, Link.LOGIT}
-)
 
 
 @dataclass(frozen=True)
@@ -170,12 +163,13 @@ def parse_directives(text: str) -> DirectiveSet:
                 _warn('directive', f'unknown directive key: {key!r}')
             )
 
-    _backend_awareness(
-        family_val, link_val, se_val, dof_val, correlation, heteroscedasticity
-    )
-    if residualise_val in (Mode.NONAGGRESSIVE, Mode.SOFT):
+    _backend_awareness(link_val)
+    if residualise_val is not None and not backend.residualise_mode_shipped(
+        residualise_val
+    ):
         _backend(
-            f'residualise={residualise_val.value} is gated on nitrix v3 §5'
+            f'residualise={residualise_val.value} is not yet shipped (nitrix '
+            'ships aggressive + nonaggressive, §5.1)'
         )
 
     family = (
@@ -299,28 +293,20 @@ def _parse_weights(
     )
 
 
-def _backend_awareness(
-    family: Family | None,
-    link: Link | None,
-    se: _SE | None,
-    dof: _Dof | None,
-    correlation: CorrelationSpec | None,
-    weights: WeightSpec | None,
-) -> None:
-    """Emit a :class:`BackendWarning` for valid IR whose nitrix kernel is not
-    yet shipped (spec §7), so specs stay forward-compatible."""
-    if family is not None and family not in _SHIPPED_FAMILIES:
-        _backend(f'family {family.value!r} is gated on nitrix v3 §4')
-    if link is not None and link not in _SHIPPED_LINKS:
-        _backend(f'link {link.value!r} is gated on nitrix v3 §4')
-    if se in ('robust', 'cluster'):
-        _backend(f'se={se} is gated on nitrix v3 §6.2')
-    if dof in ('satterthwaite', 'kr'):
-        _backend(f'dof={dof} is gated on nitrix v3 §1.3')
-    if correlation is not None:
-        _backend(f'correlation={correlation.kind} is gated on nitrix v3 §1.4')
-    if weights is not None:
-        _backend(f'weights={weights.kind} (heteroscedasticity) is gated on v3')
+def _backend_awareness(link: Link | None) -> None:
+    """Emit a :class:`BackendWarning` for valid IR the reference backend cannot
+    yet run, so specs stay forward-compatible. nitrix v3 ships families,
+    error-correlation/heteroscedasticity, robust/cluster SEs, Satterthwaite/
+    Kenward-Roger dof, and all smooth bases (see
+    :mod:`gramform.grammars.nwx.backend`); the one residual reachable from a
+    directive is a non-canonical link.
+    """
+    if link is not None and not backend.link_shipped(link):
+        _backend(
+            f'link {link.value!r} is not a nitrix built-in (only the '
+            'canonical identity/log/logit ship; others need a hand-built '
+            'Family)'
+        )
 
 
 def _backend(message: str) -> None:

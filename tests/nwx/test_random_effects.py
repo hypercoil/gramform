@@ -257,40 +257,29 @@ def test_residual_operator_still_lexes():
 
 
 # ---------------------------------------------------------------------------
-# backend-awareness warnings (spec §7 / nitrix v3 §1.1)
+# backend awareness (spec §7): every random-effect structure ships in nitrix
+# v3 -- scalar (reml_fit R1), correlated/diagonal (lme_fit R2), nested/crossed
+# (lme_fit inner=/cross= R3/R4) -- so a random effect never warns at parse.
+# (The one residual, a non-Gaussian random slope, is family-dependent and is
+# flagged by `validate` over the assembled spec -- see test_validate.)
 # ---------------------------------------------------------------------------
 
 
-def test_scalar_single_effect_does_not_warn(process):
+@pytest.mark.parametrize(
+    'formula',
+    [
+        'y ~ x + (1|g)',  # scalar, R1
+        'y ~ (0+x|g)',  # slope-only scalar
+        'y ~ (1+x|g)',  # correlated, R2
+        'y ~ (1+x||g)',  # diagonal, R2
+        'y ~ (1|g1/g2)',  # nested, R3
+        'y ~ (1|g1:g2)',  # interaction grouping
+    ],
+)
+def test_random_effect_does_not_warn(process, formula):
     with warnings.catch_warnings():
         warnings.simplefilter('error', BackendWarning)
-        process('y ~ x + (1|g)')
-
-
-def test_slope_only_does_not_warn(process):
-    # A random slope without its fixed effect is legal (lme4 permits it) and a
-    # single scalar component -> no warning.
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', BackendWarning)
-        process('y ~ (0+x|g)')
-
-
-@pytest.mark.parametrize('formula', ['y ~ (1+x|g)', 'y ~ (1+x||g)'])
-def test_non_scalar_structure_warns(process, formula):
-    with pytest.warns(BackendWarning, match='lme_fit'):
         process(formula)
-
-
-def test_nested_grouping_warns(process):
-    with pytest.warns(BackendWarning, match='[Nn]ested'):
-        process('y ~ (1|g1/g2)')
-
-
-def test_interaction_grouping_does_not_warn(process):
-    # One scalar component on an interaction grouping factor is shipped.
-    with warnings.catch_warnings():
-        warnings.simplefilter('error', BackendWarning)
-        process('y ~ (1|g1:g2)')
 
 
 # ---------------------------------------------------------------------------

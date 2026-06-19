@@ -28,23 +28,35 @@
 ## Dispatch table (populated IR fields → `nitrix` route)
 
 Checked **in order** — the first match is the cheapest exact route. `✅` = the
-kernel ships today; `⚠️ v3` = gated on the nitrix v3 feature request (spec §7).
+kernel ships today. **As of nitrix stats-suite v3 (merged 2026-06), every route
+below ships** — v3 delivered nwx's whole v1 scope; the residual `⚠️` cases are
+the handful of features nwx can express that v3 does not yet implement. The
+single source of truth for this status is `gramform.grammars.nwx.backend`.
 
 | Populated (in priority order) | Route | Status |
 |---|---|---|
 | node is an `Edge.dest` (fed by copes) | `flame_two_level` (FE/ME by `combine`) | ✅ |
 | `residualise` (a `~\|` frame) | `linalg.residualise` (aggressive) | ✅ |
-| ″ with `mode=nonaggressive` | `partial_residualise` | ⚠️ v3 §5.1 |
-| `smooth` present | `gam_fit` (+ `re`/`fs` GAMM blocks if `random`) | ✅ ps/cc/tp/te; ⚠️ v3 otherwise |
+| ″ with `mode=nonaggressive` | `partial_residualise` (ICA-AROMA, §5.1) | ✅ |
+| ″ with `mode=soft` | — (§5.2) | ⚠️ not shipped |
+| `random` + a **non-Gaussian** family | `glmm_fit` (PQL / Laplace, scalar RE) | ✅ scalar; ⚠️ random *slope* |
+| `smooth` present | `gam_fit` (+ `re`/`fs` GAMM blocks if `random`) | ✅ (ps/cc/tp/te, cr/gp/mrf, re/fs) |
 | `random` present, one `scalar` spec | `reml_fit` (R1) | ✅ |
-| `random` non-scalar / nested / crossed | `lme_fit` structure-dispatch (R2–R4) | ⚠️ v3 §1.1 |
+| `random` non-scalar / nested / crossed | `lme_fit` structure-dispatch (R2–R4) | ✅ §1.1 |
 | `partial` present | `glm_fit` — FWL (design includes the partial block; the contrast loads only on the signal columns) | ✅ |
-| only `fixed` | `glm_fit` (family/link) | ✅ Gaussian/Binomial/Poisson; ⚠️ v3 otherwise |
+| only `fixed` | `glm_fit` (family/link) | ✅ all families; ⚠️ non-canonical link (probit/inverse/sqrt) |
 
-Then, per node: each `ContrastSpec` → `t_contrast` / `f_contrast` (✅ for a GLM;
-⚠️ v3 for an LME contrast, which needs the dof machinery, §1.3); and the
-node-level `InferenceSpec` → `permutation_test` (Freedman–Lane, voxel / TFCE /
-cluster max-stat FWE, ✅) / `fdr_bh` / `bonferroni` (✅) / `rft` (⚠️ v3 §7).
+Then, per node: each `ContrastSpec` → `t_contrast` / `f_contrast` for a GLM,
+`lme_t_contrast` / `lme_f_contrast` (Satterthwaite or `dof='kr'`
+Kenward–Roger, §1.3) for an LME — **both ✅**; and the node-level
+`InferenceSpec` → `permutation_test` (Freedman–Lane, voxel / TFCE / cluster
+max-stat FWE, ✅) / `fdr_bh` / `bonferroni` (✅) / `rft` (⚠️ **not shipped** —
+nitrix has no random-field-theory kernel).
+
+**The residual unshipped set** (what `validate` / `backend` still flag): a
+non-canonical link (`probit`/`inverse`/`sqrt` — nitrix families carry only the
+canonical link), the `soft` residualise mode (§5.2), RFT inference, and a
+non-Gaussian random *slope* (`glmm_fit` fits a scalar random effect only).
 
 ## Multi-level: cope/varcope propagation, FE vs ME
 
@@ -94,13 +106,14 @@ edge: propagate {cope, varcope} stage0 -> stage1 (carry <default cope>, cope_var
 graph inference: permutation_test: Freedman-Lane, cluster_mass max-stat FWE (n=5000)
 ```
 
-Forward-looking GAMM (`s(by=)` + a random effect → nitrix v3):
+GAMM (`s(by=)` + a random effect) — once forward-looking, **now shipped** in
+v3 (`by_factor_smooth` §3.1 + the `re_smooth` GAMM bridge §2):
 
 ```
 thk ~ s(age, k=6, by=dx) + dx + noise(meanFD) + (1 | site) {{ ... }}
 
 node root: [gam_fit]
-    gam_fit: penalised smooth bases + re/fs GAMM blocks  (nitrix v3)
+    gam_fit: penalised smooth bases + re/fs GAMM blocks
 ```
 
 ## The no-regression invariant
@@ -109,8 +122,9 @@ node root: [gam_fit]
 no-regression dispatch (nitrix v3 §0.1): adding a structure-dispatch ladder must
 never change the result of a model that an earlier, simpler kernel already fit
 exactly. The `shipped` flags above let a consumer see, statically, exactly which
-formulae are runnable today versus pending a v3 kernel — the same information
-`validate(graph)` rolls up as backend-awareness Diagnostics.
+formulae are runnable today versus pending a future kernel — the same
+information `validate(graph)` rolls up as backend-awareness Diagnostics, both
+sourced from `gramform.grammars.nwx.backend`.
 
 ## Cross-references
 

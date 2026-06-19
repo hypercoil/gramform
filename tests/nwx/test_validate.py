@@ -86,21 +86,18 @@ def test_aggressive_residualise_with_signal_warns(process):
 # ---------------------------------------------------------------------------
 
 
+# nitrix v3 ships nwx's whole v1 scope, so the roll-up is now a short residual:
+# non-canonical links, the `soft` residualise mode, RFT inference, and a
+# non-Gaussian random slope (glmm_fit is scalar-RE only).
 @pytest.mark.parametrize(
     'formula,detail',
     [
-        ('y ~ x {{ family=gamma }}', "family 'gamma'"),
         ('y ~ x {{ link=probit }}', "link 'probit'"),
-        ('y ~ x {{ se=robust(hc3) }}', 'se=robust'),
-        ('y ~ x {{ dof=satterthwaite }}', 'dof=satterthwaite'),
-        ('y ~ x + (1+x|g)', "structure 'unstructured'"),
-        ('y ~ x + (1|g1/g2)', 'multiple random effects'),
-        ('y ~ s(age, bs="cr")', "basis 'cr'"),
-        ('y ~ x {{ correlation=ar1(t|g) }}', 'correlation=ar1'),
-        ('y ~ x {{ weights=varPower(z) }}', 'weights=varPower'),
+        ('bold ~| n {{ residualise=soft }}', "residualise='soft'"),
+        ('y ~ x {{ inference=parametric(rft) }}', "correction 'rft'"),
         (
-            'bold ~| noise(n) + signal(s) {{ residualise=nonaggressive }}',
-            'residualise=nonaggressive',
+            'y ~ x + (1+x|g) {{ family=binomial }}',
+            'non-Gaussian random slope',
         ),
     ],
 )
@@ -113,6 +110,31 @@ def test_backend_awareness(process, formula, detail):
 def test_core_model_has_no_backend_warning(process):
     diags = validate(parse(process, 'y ~ x {{ family=binomial; link=logit }}'))
     assert 'backend-unshipped' not in codes(diags)
+
+
+@pytest.mark.parametrize(
+    'formula',
+    [
+        'y ~ x {{ family=gamma }}',  # v3 §4
+        'y ~ x {{ family=tweedie }}',
+        'y ~ x {{ se=robust(hc3) }}',  # v3 §6.2
+        'y ~ x {{ dof=kr }}',  # v3 §1.3
+        'y ~ x + (1+x|g)',  # unstructured, lme_fit R2
+        'y ~ x + (1|g1/g2)',  # nested, lme_fit R3
+        'y ~ s(age, bs="cr")',  # v3 §3.2
+        'y ~ s(age, bs="gp")',
+        'y ~ x {{ correlation=ar1(t|g) }}',  # v3 §1.4
+        'y ~ x {{ weights=varPower(z) }}',
+        'bold ~| noise(n) + signal(s) {{ residualise=nonaggressive }}',  # §5.1
+        'y ~ x + (1+x|g) {{ family=gaussian }}',  # Gaussian random slope: R2
+    ],
+)
+def test_shipped_features_have_no_backend_warning(process, formula):
+    # everything nitrix v3 now ships must NOT roll up as backend-unshipped.
+    diags = validate(parse(process, formula))
+    assert 'backend-unshipped' not in codes(diags), [
+        d.message for d in diags if d.code == 'backend-unshipped'
+    ]
 
 
 # ---------------------------------------------------------------------------

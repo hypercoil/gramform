@@ -38,13 +38,14 @@ class Level(Enum):
 
 
 class Family(Enum):
-    """GL(A)M(M) response family. Members beyond the first three are reserved
-    (IR-ready, gated by the nitrix v3 FR), not a v1 promise."""
+    """GL(A)M(M) response family. All members ship in the reference backend
+    (nitrix v3 §4: gamma/negbinomial/tweedie in the ``_FAMILIES`` registry,
+    beta via ``beta_fit``)."""
 
     GAUSSIAN = 'gaussian'
     BINOMIAL = 'binomial'
     POISSON = 'poisson'
-    # reserved (nitrix v3 §4)
+    # nitrix v3 §4
     GAMMA = 'gamma'
     NEGBINOMIAL = 'negbinomial'
     TWEEDIE = 'tweedie'
@@ -52,23 +53,27 @@ class Family(Enum):
 
 
 class Link(Enum):
-    """Link function. Members beyond the first three are reserved."""
+    """Link function. The first three are each a nitrix family's *canonical*
+    link (shipped); ``PROBIT`` / ``INVERSE`` / ``SQRT`` are not built-in (they
+    need a hand-built ``Family``) -- see
+    :mod:`gramform.grammars.nwx.backend`."""
 
     IDENTITY = 'identity'
     LOG = 'log'
     LOGIT = 'logit'
-    # reserved
+    # not a nitrix built-in (canonical links only)
     PROBIT = 'probit'
     INVERSE = 'inverse'
     SQRT = 'sqrt'
 
 
 class Mode(Enum):
-    """Residualisation mode. ``SOFT`` is reserved (nitrix v3 §5.2)."""
+    """Residualisation mode. ``AGGRESSIVE`` + ``NONAGGRESSIVE`` ship
+    (``partial_residualise``, §5.1); ``SOFT`` (§5.2) is not yet shipped."""
 
     AGGRESSIVE = 'aggressive'
     NONAGGRESSIVE = 'nonaggressive'
-    # reserved
+    # not yet shipped (nitrix §5.2)
     SOFT = 'soft'
 
 
@@ -443,8 +448,11 @@ class Diagnostic:
 
 class BackendWarning(UserWarning):
     """A backend-awareness warning: the emitted IR is well-formed but lowers
-    onto a ``nitrix`` kernel that is not yet shipped (cites the v3 FR). Emitted
-    at parse time for forward-compatible specs (spec §7 / §8)."""
+    onto a reference-backend (``nitrix``) kernel that is not yet shipped. As of
+    stats-suite v3 this is a short residual (non-canonical link, ``soft``
+    residualise, RFT inference, non-Gaussian random slope); the authoritative
+    capability set is :mod:`gramform.grammars.nwx.backend`. Emitted at parse
+    time for forward-compatible specs (spec §7 / §8)."""
 
 
 @runtime_checkable

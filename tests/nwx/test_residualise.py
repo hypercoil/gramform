@@ -145,11 +145,19 @@ def test_residualise_directive_without_residual_op_warns(process):
             process('y ~ x {{ residualise=nonaggressive }}')
 
 
-def test_nonaggressive_emits_backend_warning(process):
-    with pytest.warns(BackendWarning, match='nitrix v3'):
+def test_nonaggressive_does_not_emit_backend_warning(process):
+    # `partial_residualise` (ICA-AROMA, §5.1) ships in nitrix v3.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', BackendWarning)
         process(
             'bold ~| noise(n) + signal(s) {{ residualise=nonaggressive }}'
         )
+
+
+def test_soft_residualise_emits_backend_warning(process):
+    # `soft` (§5.2) is the one residualise mode nitrix does not yet ship.
+    with pytest.warns(BackendWarning, match='soft'):
+        process('bold ~| noise(n) + signal(s) {{ residualise=soft }}')
 
 
 # ---------------------------------------------------------------------------

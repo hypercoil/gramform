@@ -28,8 +28,6 @@ resolved by the engine / validator (spec §4.3, §8). Plain ``bs`` / ``ns`` /
 ``poly`` are *not* smooths; they remain data transforms (a later phase).
 """
 
-import warnings
-
 from gramform.core import Literal, Primitive
 from gramform.grammars.nwx.spec import (
     BasisKind,
@@ -42,13 +40,12 @@ from gramform.grammars.nwx.transform import (
     NwxContext,
     NwxError,
 )
-from gramform.grammars.nwx.transform_ranef import BackendWarning
 
 #: Smooth constructors (special only in call position).
 SMOOTH_CONSTRUCTORS = frozenset({'s', 'te', 'ti', 't2'})
 
-#: ``bs=`` basis string -> ``BasisKind``. The first group is shipped; ``cr`` /
-#: ``gp`` / ``mrf`` / ``re`` / ``fs`` are reserved (nitrix v3-gated).
+#: ``bs=`` basis string -> ``BasisKind``. All of these ship in nitrix v3
+#: (ps/cc/tp/te v1; cr/gp/mrf §3.2; the GAMM-bridge re/fs §2/§3.1).
 _BASIS = {
     'tp': BasisKind.TPRS,
     'tprs': BasisKind.TPRS,
@@ -65,10 +62,6 @@ _BASIS = {
 }
 #: Cyclic ``bs=`` strings (carry a period; not auto-periodised to the data).
 _CYCLIC = frozenset({'cc', 'cp'})
-#: Shipped bases (the rest validate-with-warning until the v3 kernels land).
-_SHIPPED = frozenset(
-    {BasisKind.PS, BasisKind.CC, BasisKind.TPRS, BasisKind.TENSOR}
-)
 #: GAMM-bridge bases whose second positional arg is a slope variable (-> by).
 _RE_BASES = frozenset({BasisKind.RE, BasisKind.FS})
 _TRUE = frozenset({'TRUE', 'True', 'true', 'T', 'yes'})
@@ -196,14 +189,8 @@ def build_smooth(node: Primitive, context: NwxContext) -> NwxContext:
         fx=fx,
     )
 
-    if basis not in _SHIPPED:
-        warnings.warn(
-            f'smooth basis {basis.value!r} lowers onto a nitrix v3 kernel '
-            '(FR §2 / §3.1), not a shipped basis (ps/cc/tp/te)',
-            BackendWarning,
-            stacklevel=2,
-        )
-
+    # All nwx smooth bases ship in nitrix v3 (ps/cc/tp/te, cr/gp/mrf, re/fs),
+    # so no backend-awareness warning is raised here.
     context = context.update_state(smooth=context.state.smooth + (spec,))
     # A smooth contributes no fixed term.
     return context.with_result(())

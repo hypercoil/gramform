@@ -64,7 +64,15 @@ def test_scalar_random_is_reml(process):
 def test_nonscalar_random_is_lme(process):
     root = node(plan(process, 'y ~ x + (1+x|g)'), 'root')
     assert root.route == 'lme_fit'
-    assert not root.calls[0].shipped  # R2 is nitrix v3
+    assert root.calls[0].shipped  # R2 (block-Woodbury) ships in nitrix v3
+
+
+def test_nongaussian_random_slope_is_unshipped_glmm(process):
+    # glmm_fit ships a scalar RE only -> a non-Gaussian random slope is the
+    # one random-effect case still gated.
+    root = node(plan(process, 'y ~ x + (1+x|g) {{ family=binomial }}'), 'root')
+    assert root.route == 'glmm_fit'
+    assert not root.calls[0].shipped
 
 
 def test_smooth_is_gam(process):
@@ -95,11 +103,13 @@ def test_f_contrast_for_f_test(process):
     assert 'f_contrast' in routines(root)
 
 
-def test_binomial_ships_gamma_does_not(process):
-    binom = node(plan(process, 'y ~ x {{ family=binomial }}'), 'root')
-    assert binom.calls[0].routine == 'glm_fit' and binom.calls[0].shipped
-    gamma = node(plan(process, 'y ~ x {{ family=gamma }}'), 'root')
-    assert gamma.calls[0].routine == 'glm_fit' and not gamma.calls[0].shipped
+def test_glm_families_ship_but_noncanonical_link_does_not(process):
+    # all nwx families ship in v3; the residual is a non-canonical link.
+    for family in ('binomial', 'gamma', 'tweedie'):
+        glm = node(plan(process, f'y ~ x {{{{ family={family} }}}}'), 'root')
+        assert glm.calls[0].routine == 'glm_fit' and glm.calls[0].shipped
+    probit = node(plan(process, 'y ~ x {{ link=probit }}'), 'root')
+    assert not probit.calls[0].shipped
 
 
 @pytest.mark.parametrize(
@@ -145,7 +155,9 @@ def test_multilevel_flame_example(process):
     assert run.inference and run.inference[0].routine == 'permutation_test'
 
 
-def test_gamm_example_is_v3_gated(process):
+def test_gamm_example_now_ships(process):
+    # the GAMM (s(by=) + a random effect) that v1 could not run is shipped in
+    # v3 (by_factor_smooth §3.1 + the re_smooth GAMM bridge §2).
     run = plan(
         process,
         'thk ~ s(age, k=6, by=dx) + dx + noise(meanFD) + (1|site) '
@@ -153,7 +165,7 @@ def test_gamm_example_is_v3_gated(process):
     )
     root = node(run, 'root')
     assert root.route == 'gam_fit'
-    assert not root.calls[0].shipped  # s(by=) + GAMM re-block need nitrix v3
+    assert root.calls[0].shipped
 
 
 # ---------------------------------------------------------------------------

@@ -33,28 +33,18 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
+from gramform.grammars.nwx import backend
 from gramform.grammars.nwx.spec import (
     BasisKind,
     Diagnostic,
-    Family,
-    Link,
     Lookup,
     Mode,
     ModelGraph,
     ModelNode,
     ModelSpec,
     Severity,
-    Structure,
 )
 
-#: Features whose nitrix kernel ships in v1 (the rest warn, spec §7).
-_SHIPPED_FAMILIES = frozenset(
-    {Family.GAUSSIAN, Family.BINOMIAL, Family.POISSON}
-)
-_SHIPPED_LINKS = frozenset({Link.IDENTITY, Link.LOG, Link.LOGIT})
-_SHIPPED_BASES = frozenset(
-    {BasisKind.PS, BasisKind.CC, BasisKind.TPRS, BasisKind.TENSOR}
-)
 #: Smooth bases whose ``by=`` second arg is a slope variable, not a factor.
 _RE_BASES = frozenset({BasisKind.RE, BasisKind.FS})
 
@@ -135,61 +125,54 @@ def _check_backend_awareness(
     where: str,
     spec: ModelSpec,
 ) -> Iterator[Diagnostic]:
-    """Roll up every IR feature whose nitrix kernel is not yet shipped (spec
-    §7), so ``validate`` gives a complete forward-compatibility report."""
+    """Roll up every IR feature the reference backend cannot yet run, so
+    ``validate`` gives a complete forward-compatibility report. nitrix
+    stats-suite v3 ships nwx's whole v1 scope (see
+    :mod:`gramform.grammars.nwx.backend`), so this is now a short residual:
+    non-canonical links, the ``soft`` residualise mode, RFT inference, and a
+    non-Gaussian random *slope*."""
     fam = spec.family
-    if fam.family not in _SHIPPED_FAMILIES:
-        yield _backend(f'family {fam.family.value!r} (FR §4)', where)
-    if fam.link not in _SHIPPED_LINKS:
-        yield _backend(f'link {fam.link.value!r} (FR §4)', where)
-
-    if len(spec.random) > 1:
+    if not backend.link_shipped(fam.link):
         yield _backend(
-            'multiple random effects (nested/crossed) lower onto lme_fit '
-            '(FR §1.1 R3/R4)',
+            f'link {fam.link.value!r} is not a nitrix built-in (only the '
+            'canonical identity/log/logit ship; others need a hand-built '
+            'Family)',
             where,
         )
+
+    # GLMM random slope: glmm_fit ships scalar RE only; a non-scalar random
+    # effect under a non-Gaussian family is the Tier-2 deferral (a Gaussian
+    # random slope is shipped via lme_fit R2, so it is not flagged).
     for re in spec.random:
-        if re.structure is not Structure.SCALAR:
+        if backend.glmm_random_slope_unshipped(re.structure, fam.family):
             yield _backend(
-                f'random-effect structure {re.structure.value!r} lowers onto '
-                'lme_fit (FR §1.1 R2)',
+                f'a {re.structure.value!r} random effect under family '
+                f'{fam.family.value!r} (a non-Gaussian random slope) is not '
+                'yet shipped; glmm_fit fits a scalar random effect only',
                 where,
             )
 
-    for smooth in spec.smooth:
-        if smooth.basis not in _SHIPPED_BASES:
-            yield _backend(
-                f'smooth basis {smooth.basis.value!r} (FR §2 / §3.1)', where
-            )
-
-    if spec.errors is not None:
-        if spec.errors.correlation is not None:
-            yield _backend(
-                f'correlation={spec.errors.correlation.kind} (FR §1.4)', where
-            )
-        if spec.errors.heteroscedasticity is not None:
-            yield _backend(
-                f'weights={spec.errors.heteroscedasticity.kind} (FR §6)', where
-            )
-
-    est = spec.estimation
-    if est.se in ('robust', 'cluster'):
-        yield _backend(f'se={est.se} (FR §6.2)', where)
-    if est.dof in ('satterthwaite', 'kr'):
-        yield _backend(f'dof={est.dof} (FR §1.3)', where)
-
     for res in spec.residualise:
-        if res.mode is not Mode.AGGRESSIVE:
-            yield _backend(f'residualise={res.mode.value} (FR §5)', where)
+        if not backend.residualise_mode_shipped(res.mode):
+            yield _backend(
+                f'residualise={res.mode.value!r} is not yet shipped (nitrix '
+                'ships aggressive + nonaggressive)',
+                where,
+            )
+
+    inf = spec.inference
+    if inf is not None and not backend.inference_correction_shipped(
+        inf.correction
+    ):
+        yield _backend(
+            f'inference correction {inf.correction!r} is not yet shipped '
+            '(nitrix ships permutation/TFCE/cluster/FDR/Bonferroni)',
+            where,
+        )
 
 
 def _backend(detail: str, where: str) -> Diagnostic:
-    return _warn(
-        'backend-unshipped',
-        f'{detail} is gated on the nitrix v3 feature request, not yet shipped',
-        where,
-    )
+    return _warn('backend-unshipped', detail, where)
 
 
 # ---------------------------------------------------------------------------

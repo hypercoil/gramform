@@ -20,25 +20,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from gramform.grammars.nwx import backend
 from gramform.grammars.nwx.spec import (
-    BasisKind,
     Combine,
     Family,
-    Link,
     Mode,
     ModelGraph,
     ModelNode,
     ModelSpec,
     Structure,
     Test,
-)
-
-_SHIPPED_FAMILIES = frozenset(
-    {Family.GAUSSIAN, Family.BINOMIAL, Family.POISSON}
-)
-_SHIPPED_LINKS = frozenset({Link.IDENTITY, Link.LOG, Link.LOGIT})
-_SHIPPED_BASES = frozenset(
-    {BasisKind.PS, BasisKind.CC, BasisKind.TPRS, BasisKind.TENSOR}
 )
 
 
@@ -122,21 +113,33 @@ def _fit_call(
             )
         return Call(
             'partial_residualise',
-            'non-aggressive: remove only the noise-unique fit',
-            shipped=False,
+            'non-aggressive (ICA-AROMA): remove only the noise-unique fit',
+            shipped=backend.residualise_mode_shipped(res.mode),
         )
     # Within-node fit: smooth > random > partial > plain (the cheapest exact).
     if spec.smooth:
         bridge = ' + re/fs GAMM blocks' if spec.random else ''
-        shipped = all(s.basis in _SHIPPED_BASES for s in spec.smooth) and (
-            not spec.random
-        )
+        shipped = all(backend.basis_shipped(s.basis) for s in spec.smooth)
         return Call(
             'gam_fit',
             f'penalised smooth bases{bridge}',
             shipped=shipped,
         )
     if spec.random:
+        family = spec.family.family
+        # A non-Gaussian family + random effect -> GLMM (glmm_fit, scalar RE
+        # only); a Gaussian random effect -> reml_fit (R1) / lme_fit (R2-R4).
+        if family is not Family.GAUSSIAN:
+            structures = {re.structure for re in spec.random}
+            slope = any(
+                backend.glmm_random_slope_unshipped(s, family)
+                for s in structures
+            )
+            return Call(
+                'glmm_fit',
+                f'{family.value} GLMM, scalar RE (PQL / Laplace)',
+                shipped=not slope,
+            )
         scalar = (
             len(spec.random) == 1
             and spec.random[0].structure is Structure.SCALAR
@@ -146,12 +149,11 @@ def _fit_call(
         return Call(
             'lme_fit',
             'structure-dispatch (R2-R4): non-scalar / nested / crossed',
-            shipped=False,
+            shipped=True,
         )
-    family_shipped = (
-        spec.family.family in _SHIPPED_FAMILIES
-        and spec.family.link in _SHIPPED_LINKS
-    )
+    family_shipped = backend.family_shipped(
+        spec.family.family
+    ) and backend.link_shipped(spec.family.link)
     if spec.partial:
         return Call(
             'glm_fit',
@@ -167,14 +169,15 @@ def _fit_call(
 
 
 def _contrast_calls(spec: ModelSpec) -> list[Call]:
-    # An LME contrast (random present) needs the v3 dof machinery; a GLM
-    # contrast is shipped (spec §7).
-    shipped = not spec.random
+    # GLM (t/f_contrast) and LME (lme_t/f_contrast, Satterthwaite + KR dof)
+    # contrasts both ship in nitrix v3.
+    lme = bool(spec.random)
     calls = []
     for estimand in spec.estimands:
-        routine = 'f_contrast' if estimand.test is Test.F else 't_contrast'
+        base = 'f_contrast' if estimand.test is Test.F else 't_contrast'
+        routine = f'lme_{base}' if lme else base
         calls.append(
-            Call(routine, f'estimand {estimand.name!r}', shipped=shipped)
+            Call(routine, f'estimand {estimand.name!r}', shipped=True)
         )
     return calls
 
@@ -194,7 +197,11 @@ def _inference_call(inf) -> Call:
     if correction == 'bonferroni':
         return Call('bonferroni', 'Bonferroni FWE')
     if correction == 'rft':
-        return Call('rft', 'random-field-theory FWE', shipped=False)
+        return Call(
+            'rft',
+            'random-field-theory FWE',
+            shipped=backend.inference_correction_shipped(correction),
+        )
     return Call('parametric', f'parametric correction={correction}')
 
 

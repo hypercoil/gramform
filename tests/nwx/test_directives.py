@@ -159,16 +159,16 @@ def test_malformed_correlation_warns():
 # ---------------------------------------------------------------------------
 
 
+# nitrix v3 ships families, robust/cluster SEs, Satterthwaite/KR dof, and error
+# correlation + heteroscedasticity. The residual reachable from a directive is
+# a non-canonical link and the `soft` residualise mode.
 @pytest.mark.parametrize(
     'text',
     [
-        'family=gamma',
         'link=probit',
-        'se=robust',
-        'se=cluster(subject)',
-        'dof=satterthwaite',
-        'correlation=ar1(time | g)',
-        'weights=varPower(x)',
+        'link=inverse',
+        'link=sqrt',
+        'residualise=soft',
     ],
 )
 def test_backend_awareness_warns(text):
@@ -176,10 +176,24 @@ def test_backend_awareness_warns(text):
         parse_directives(text)
 
 
-def test_shipped_directives_do_not_warn():
+@pytest.mark.parametrize(
+    'text',
+    [
+        'family=binomial; link=logit; estimator=reml',
+        'family=gamma',  # v3 §4
+        'se=robust(hc3)',  # v3 §6.2
+        'se=cluster(subject)',
+        'dof=satterthwaite',  # v3 §1.3
+        'dof=kr',
+        'correlation=ar1(time | g)',  # v3 §1.4
+        'weights=varPower(x)',
+        'residualise=nonaggressive',  # v3 §5.1
+    ],
+)
+def test_shipped_directives_do_not_warn(text):
     with warnings.catch_warnings():
         warnings.simplefilter('error', BackendWarning)
-        parse_directives('family=binomial; link=logit; estimator=reml')
+        parse_directives(text)
 
 
 # ---------------------------------------------------------------------------

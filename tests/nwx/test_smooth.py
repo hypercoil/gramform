@@ -188,8 +188,12 @@ def test_unknown_basis_raises(process):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize('bs', ['tp', 'ps', 'cc'])
-def test_shipped_basis_does_not_warn(process, bs):
+# Every nwx smooth basis ships in nitrix v3 (ps/cc/tp/te v1; cr/gp/mrf §3.2;
+# the GAMM-bridge re/fs §2/§3.1), so no basis warns at parse.
+@pytest.mark.parametrize(
+    'bs', ['tp', 'ps', 'cc', 'cr', 'gp', 'mrf', 're', 'fs']
+)
+def test_basis_does_not_warn(process, bs):
     with warnings.catch_warnings():
         warnings.simplefilter('error', BackendWarning)
         process(f'y ~ s(age, bs="{bs}")')
@@ -199,12 +203,6 @@ def test_tensor_does_not_warn(process):
     with warnings.catch_warnings():
         warnings.simplefilter('error', BackendWarning)
         process('y ~ te(x, z)')
-
-
-@pytest.mark.parametrize('bs', ['cr', 'gp', 'mrf', 're', 'fs'])
-def test_reserved_basis_warns(process, bs):
-    with pytest.warns(BackendWarning, match='nitrix v3'):
-        process(f'y ~ s(age, bs="{bs}")')
 
 
 # ---------------------------------------------------------------------------

@@ -38,8 +38,6 @@ the fixed-effect case. A random slope without its fixed effect is **legal**
 ``factor``.
 """
 
-import warnings
-
 from gramform.core import Primitive
 from gramform.grammars.nwx.spec import (
     BackendWarning,
@@ -169,25 +167,11 @@ def RANDOM_EFFECT_impl(node: Primitive, context: NwxContext) -> NwxContext:
         for factors in components
     )
 
-    # Backend awareness (spec §7 / nitrix v3 §1.1): only a single scalar effect
-    # on a single (or interaction) grouping factor lowers onto the shipped
-    # `reml_fit` (R1). Non-scalar structures (R2) and nested groupings (R3)
-    # need the v3 `lme_fit` ladder.
-    if structure is not Structure.SCALAR:
-        warnings.warn(
-            f'random-effect covariance structure {structure.value!r} lowers '
-            'onto the nitrix v3 lme_fit ladder (FR §1.1 R2), not the shipped '
-            'scalar reml_fit',
-            BackendWarning,
-            stacklevel=2,
-        )
-    if len(components) > 1:
-        warnings.warn(
-            'nested random effects lower onto the nitrix v3 lme_fit ladder '
-            '(FR §1.1 R3), not the shipped scalar reml_fit',
-            BackendWarning,
-            stacklevel=2,
-        )
+    # Backend awareness (spec §7): scalar (`reml_fit` R1), correlated/diagonal
+    # (`lme_fit` R2), and nested/crossed (`lme_fit(inner=/cross=)` R3/R4) all
+    # ship in nitrix v3 -- no warning. The one residual, a *non-Gaussian*
+    # random slope (glmm_fit is scalar-RE only), needs the family, which is a
+    # later directive; it is flagged in `validate` over the assembled spec.
 
     context = context.update_state(random=context.state.random + specs)
     # A random effect contributes no fixed terms.
