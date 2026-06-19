@@ -361,47 +361,49 @@ If the venv ever breaks, rebuild it **only on /scratch**:
 `uv pip install --python /scratch/gramform-venv/bin/python ply wadler-lindig pydantic formulaic narwhals numpy pandas pytest pytest-cov "coverage[toml]" ruff pyright`
 (set `UV_CACHE_DIR`/`UV_PYTHON_INSTALL_DIR`/`TMPDIR` to `/scratch/...` first).
 
-## YOUR NEXT TASK — Phase 6 (covariate program) then Phase 7 (validate + BIDS)
+## PROJECT COMPLETE — all phases done (M1–M4) ✅
 
-Phases 1–5 are DONE (M1–M3). Two phases remain:
+**Phases 0–7 are all DONE and verified green (M1–M4): the nwx DSL is validated,
+contract-proven, and BIDS-SM importable.** Final state on branch `nwx`: **317
+passed / 1 xfailed; ruff + format clean; pyright 0 on nwx; parser-conflict gate
+= 0; coverage 78% (floor 78); reference engine 27 passed; firewall green.**
 
-**Phase 6 — `CovariateProgram` completeness** (`implementation-plan.md` Phase 6;
-disjoint `covariate.py`, independent of the grammar). Extend the minimal Phase-1
-`CovariateOp` set to the full closed union harvested from `grammars/dataframe/`
-(`Shorthand`, `Derivative`, `Power`, `CompCorSelect` via `{{…}}`, `Indicator`,
-`SetOp`, `Scatter`); wire covariate shorthands into the term interpreter (they
-are defined but NOT yet lowered into terms — `csf` is passthrough, not a
-shorthand). Shorthand expansions as a preprocessor (the
-`confound_formula_preprocessor` pattern). **Emit-only** (nwx holds no array).
-Tests: 36P `(dd_(rps+wm+csf+gsr))^^2`, spike `:::`/`OR_`/`I_`, aCompCor `v_`
-→ expected `CovariateProgram` + term set. Fixes the one `xfail`ed `dataframe`
-transform test (API drift).
+> ⚠️ **Provenance (2nd crash).** A Code Ocean crash on 2026-06-19 rolled git back
+> to `48a830d` (end of Phase 5). Phases 6, 7a–7d, the `minimaltest→dataframe`
+> rename, and the coverage ratchet were **reconstructed** from the session
+> transcript (the `[recovered]` commits) and verified green. Commit hashes
+> differ from the lost originals.
 
-**Phase 7 — validation, errors, contract, BIDS-SM importer** (last).
-`validate(graph) -> tuple[Diagnostic, ...]` per §8: rank/identifiability,
-intercept, RE well-formedness, **smooth factor-`by=` without its main effect**
-(deferred from P4), non-aggressive-needs-signal (already enforced at parse —
-move/duplicate as a Diagnostic), reserved-name shadowing, **multi-level DAG +
-`Edge.carry.contrast` resolves to a real upstream `ContrastSpec`** (the carry
-binding `PIPELINE_impl` left as a default), `.` disambiguation, backend-awareness
-roll-up. Plus the engine-contract doc + a dry-run dispatcher under `tests/nwx/`
-and the read-direction BIDS Stats Models importer (`model.json` → `ModelGraph`).
+**Phase 6 (`covariate.py`): emit-only `CovariateProgram`** — the full
+`CovariateOp` union (`Column`/`Shorthand`/`Derivative`/`Power`/`CompCorSelect`/
+`Indicator`/`SetOp`/`Scatter`, nested); `lower_covariates(formula)` parses a
+confound string through the `dataframe` grammar, pure. **Phase 7a:** the
+covariate→term wiring (a shorthand → `CovariateRef` only in a confound context =
+where terms are finalised as nuisance: `noise()`→`partial`, the `~|` noise set;
+via a post-hoc `_confoundify`). **Phase 7b (`validate.py`):** the §8 static
+report (smooth-`by=` identifiability, aggressive+signal, backend-awareness
+roll-up; ERROR for edge endpoints / carry resolution / DAG). **Phase 7c
+(`engine-contract.md` + `tests/nwx/dryrun.py`):** the §9 dispatch table, made
+executable (`dry_run(graph)` emits the intended nitrix calls without importing
+nitrix; round-trips §11). **Phase 7d (`bids.py`):** the read-direction BIDS-SM
+importer (`model.json` → `ModelGraph`, feeding `validate` + `dry_run`).
 
-> The reference engine extends in lockstep as nitrix kernels are surfaced
-> (smooths → `gam_fit`; random effects → `lme_fit`; non-aggressive →
-> `partial_residualise`; FLAME two-level chaining for the `>>` graph). Today the
-> Phase-2 engine rejects populated `random`/`smooth`/`residualise`/multi-node IR
-> with a helpful `EngineError`.
+**Optional follow-ups (not roadmap-blocking):** BIDS-SM *export*
+(`ModelGraph` → `model.json`); the full *inline* confound vocab (`dd_`/`^^`/`:::`
+inside a formula via a `{{ confounds=… }}` directive); `Node.Transformations` →
+`CovariateProgram` (general BIDS ops, needs a transform→op table); the reference
+engine in lockstep as nitrix kernels surface (`gam_fit`/`lme_fit`/
+`partial_residualise`/FLAME); and tests for (or retirement of) the legacy
+`grammars/dataframe` narwhals materialiser (~31%) to climb the coverage floor.
 
 ## Roadmap (phases 1–7) & milestones
 
 ```
 Phase 0 ✅ ─▶ 1 ✅ ─▶ 2 ✅ (runnable slice) ─┬─▶ 3 ✅ (random effects) ─┐
-                                            ├─▶ 4 ✅ (smooths+directives)┼▶ 5 ✅ ▶ 7
-                                            └─▶ 6 (covariate prog) ──────┘
-  (5 ✅ = 5a residualise modes + 5b grammar-integrated {{}} + 5c multi-level >>.
-   The exclusive-state {{}} lexer was realised as a blob token in 5b.
-   Remaining: 6 (covariate program), 7 (validate + BIDS-SM importer).)
+                                            ├─▶ 4 ✅ (smooths+directives)┼▶ 5 ✅ ▶ 7 ✅
+                                            └─▶ 6 ✅ (covariate prog) ───┘
+  ALL PHASES DONE (M1–M4). 7 ✅ = 7a covariate→term wiring + 7b validate.py +
+  7c engine-contract doc & dry-run dispatcher + 7d BIDS-SM importer.
 ```
 - **M1** (end P2): nwx usable, formula→corrected stat-map via the external
   reference engine. **M2** (end P4): GAM/GLMM formulae + full directives.
