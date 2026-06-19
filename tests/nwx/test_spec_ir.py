@@ -190,12 +190,14 @@ def test_noise_multiple_terms_to_partial(process):
 
 
 def test_top_level_residualise(process):
-    g = process('bold ~| rps + wm')
+    # Non-shorthand noise names stay plain Lookups (shorthand confounds ->
+    # CovariateRef are covered in test_covariate_wiring.py).
+    g = process('bold ~| n1 + n2')
     spec = g.nodes[0].spec
     assert spec.fixed == ()
     assert len(spec.residualise) == 1
     assert spec.residualise[0].target == (L('bold'),)
-    assert spec.residualise[0].noise == (INTERCEPT, L('rps'), L('wm'))
+    assert spec.residualise[0].noise == (INTERCEPT, L('n1'), L('n2'))
 
 
 # ---------------------------------------------------------------------------

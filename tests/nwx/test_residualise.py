@@ -54,10 +54,12 @@ def residualise_of(process, formula: str) -> ResidualiseSpec:
 
 
 def test_aggressive_is_default(process):
-    r = residualise_of(process, 'bold ~| rps + wm')
+    # Non-shorthand noise names stay plain Lookups (confound shorthands ->
+    # CovariateRef are exercised in test_covariate_wiring.py).
+    r = residualise_of(process, 'bold ~| n1 + n2')
     assert r == ResidualiseSpec(
         target=(L('bold'),),
-        noise=(INTERCEPT, L('rps'), L('wm')),
+        noise=(INTERCEPT, L('n1'), L('n2')),
         signal=(),
         mode=Mode.AGGRESSIVE,
     )
@@ -90,10 +92,10 @@ def test_unwrapped_terms_are_noise(process):
     # Unwrapped terms on a `~|` RHS join the noise set alongside noise().
     r = residualise_of(
         process,
-        'bold ~| wm + noise(aroma1) + signal(task) '
+        'bold ~| motion + noise(aroma1) + signal(task) '
         '{{ residualise=nonaggressive }}',
     )
-    assert r.noise == (INTERCEPT, L('wm'), L('aroma1'))
+    assert r.noise == (INTERCEPT, L('motion'), L('aroma1'))
     assert r.signal == (L('task'),)
 
 

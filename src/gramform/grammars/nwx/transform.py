@@ -43,12 +43,18 @@ from gramform.core import (
     TypedState,
     withCacheSubcontext,
 )
+from gramform.grammars.nwx.covariate import (
+    CovariateProgram,
+    Shorthand,
+    is_shorthand,
+)
 from gramform.grammars.nwx.directives import DirectiveSet, parse_directives
 from gramform.grammars.nwx.grammar import NwxGrammar
 from gramform.grammars.nwx.spec import (
     Carry,
     Combine,
     Const,
+    CovariateRef,
     Edge,
     FactorSpec,
     Level,
@@ -102,6 +108,7 @@ class _Block:
     random: tuple[RandomEffectSpec, ...] = ()
     smooth: tuple[SmoothSpec, ...] = ()
     signal: tuple[TermSpec, ...] = ()  # signal() set on a `~|` RHS
+    covariates: CovariateProgram = ()  # ops referenced by CovariateRef factors
 
 
 @dataclass(frozen=True)
@@ -129,6 +136,7 @@ class NwxState(TypedState):
     smooth: tuple[SmoothSpec, ...] = ()
     signal: tuple[TermSpec, ...] = ()
     residualise_noise: tuple[TermSpec, ...] = ()
+    covariates: CovariateProgram = ()
     in_residualise: bool = False
     inbound_stage: str | None = None  # `.` on a stage LHS = this stage's cope
     directives: DirectiveSet | None = None
@@ -155,10 +163,12 @@ def _factor_key(factor: FactorSpec) -> tuple[str, ...]:
             return ('2pyexpr', code)
         case Referent(stage=stage, kind=kind):
             return ('3referent', stage, kind)
+        case CovariateRef(op_index=index):
+            return ('4covref', str(index))
         case Const(value=value):
             return ('0const', repr(value))
         case _:
-            return ('4other', repr(source))
+            return ('5other', repr(source))
 
 
 def to_term(factors: Iterable[FactorSpec]) -> TermSpec:
@@ -291,6 +301,52 @@ def _render(source: TermSource) -> str:
 
 
 # ---------------------------------------------------------------------------
+# covariate lowering: shorthands -> CovariateRef, only where terms are nuisance
+# ---------------------------------------------------------------------------
+
+
+def _register_covariate(
+    context: NwxContext,
+    op: Shorthand,
+) -> tuple[NwxContext, int]:
+    """Append ``op`` to the node's covariate program (deduplicated by value),
+    returning the context + its ``op_index``."""
+    program = context.state.covariates
+    if op in program:
+        return context, program.index(op)
+    context = context.update_state(covariates=program + (op,))
+    return context, len(program)
+
+
+def _confoundify(
+    terms: tuple[TermSpec, ...],
+    context: NwxContext,
+) -> tuple[tuple[TermSpec, ...], NwxContext]:
+    """Replace shorthand ``Lookup`` factors with ``CovariateRef``s into the
+    emit-only covariate program. Applied only at the points where terms are
+    finalised as **nuisance** (``noise()`` -> ``partial``, the ``~|`` noise
+    set) -- the principled "confound context": confounds are the nuisance you
+    remove, never a modelled effect (fixed / signal / random / smooth). Plain
+    columns (``csf``, user covariates) are untouched."""
+    out: list[TermSpec] = []
+    for term in terms:
+        factors: list[FactorSpec] = []
+        for factor in term.factors:
+            source = factor.source
+            if isinstance(source, Lookup) and is_shorthand(source.name):
+                context, index = _register_covariate(
+                    context, Shorthand(source.name)
+                )
+                factors.append(
+                    dataclasses.replace(factor, source=CovariateRef(index))
+                )
+            else:
+                factors.append(factor)
+        out.append(TermSpec(tuple(factors)))
+    return tuple(out), context
+
+
+# ---------------------------------------------------------------------------
 # term-algebra operations
 # ---------------------------------------------------------------------------
 
@@ -412,10 +468,12 @@ def NAMED_FUNCTION_impl(node: Primitive, context: NwxContext) -> NwxContext:
         context = expr(context)
         terms = to_terms(_coerce(context.get_result()))
         if context.state.in_residualise:
+            # The `~|` noise set is confoundified once, in RESIDUAL_STRUCTURE.
             context = context.update_state(
                 residualise_noise=context.state.residualise_noise + terms
             )
         else:
+            terms, context = _confoundify(terms, context)
             context = context.update_state(
                 partial=context.state.partial + terms
             )
@@ -452,13 +510,16 @@ def LHS_RHS_STRUCTURE_impl(node: Primitive, context: NwxContext) -> NwxContext:
     lhs = to_terms(_coerce(context.get_result()))
     context = rhs_expr(context)
     rhs = to_terms(_coerce(context.get_result()))
-    # Consume any noise() partials, (...|g) random effects, and s()/te()/...
-    # smooths accumulated while evaluating this RHS, so they bind to this block
-    # and do not leak to an enclosing one.
+    # Consume the noise() partials, (...|g) random effects, s()/te() smooths,
+    # and covariate-program ops accumulated while evaluating this RHS, so they
+    # bind to this block and do not leak to an enclosing one.
     partial = context.state.partial
     random = context.state.random
     smooth = context.state.smooth
-    context = context.update_state(partial=(), random=(), smooth=())
+    covariates = context.state.covariates
+    context = context.update_state(
+        partial=(), random=(), smooth=(), covariates=()
+    )
     return context.with_result(
         _Block(
             lhs=lhs,
@@ -466,6 +527,7 @@ def LHS_RHS_STRUCTURE_impl(node: Primitive, context: NwxContext) -> NwxContext:
             partial=partial,
             random=random,
             smooth=smooth,
+            covariates=covariates,
         )
     )
 
@@ -484,12 +546,23 @@ def RESIDUAL_STRUCTURE_impl(
     unwrapped = to_terms(_coerce(context.get_result()))
     signal = context.state.signal
     extra_noise = context.state.residualise_noise
+    # The whole noise set is a confound context: shorthands -> CovariateRef.
+    noise, context = _confoundify(to_terms(unwrapped + extra_noise), context)
+    covariates = context.state.covariates
     context = context.update_state(
-        in_residualise=False, signal=(), residualise_noise=()
+        in_residualise=False,
+        signal=(),
+        residualise_noise=(),
+        covariates=(),
     )
-    noise = to_terms(unwrapped + extra_noise)
     return context.with_result(
-        _Block(lhs=target, rhs=noise, residualise=True, signal=signal)
+        _Block(
+            lhs=target,
+            rhs=noise,
+            residualise=True,
+            signal=signal,
+            covariates=covariates,
+        )
     )
 
 
@@ -682,6 +755,7 @@ def _block_to_modelspec(block: _Block) -> ModelSpec:
                     mode=Mode.AGGRESSIVE,
                 ),
             ),
+            covariates=block.covariates,
         )
     return ModelSpec(
         response=response,
@@ -689,6 +763,7 @@ def _block_to_modelspec(block: _Block) -> ModelSpec:
         partial=block.partial,
         random=block.random,
         smooth=block.smooth,
+        covariates=block.covariates,
     )
 
 
@@ -763,6 +838,7 @@ def finalise_hook(context: NwxContext) -> NwxContext:
             partial=context.state.partial,
             random=context.state.random,
             smooth=context.state.smooth,
+            covariates=context.state.covariates,
         )
     spec = _apply_directives(spec, directives)
     _validate_residualise(spec.residualise)
