@@ -27,8 +27,8 @@ from gramform.core import (
     TypedState,
     withCacheSubcontext,
 )
-from gramform.grammars.minimaltest.grammar import (
-    MinimalGrammar,
+from gramform.grammars.dataframe.grammar import (
+    DataFrameGrammar,
     confound_formula_preprocessor,
 )
 from gramform.postprocessors import (
@@ -356,7 +356,7 @@ INTERPRETERS.register_operation(
 
 def get_processor():
     processor = TransformProcessor(
-        grammar=MinimalGrammar(),
+        grammar=DataFrameGrammar(),
         preprocessors=(confound_formula_preprocessor(),),
         postprocessors=(
             ppr_associative_flatten,

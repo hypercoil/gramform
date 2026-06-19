@@ -1,10 +1,10 @@
 # nwx covariate vocabulary — harvested reference
 
 > **Source of truth for nwx Phase 5/6** (the `CovariateProgram`). Transcribed
-> from the **`grammars/minimaltest/`** grammar (the `ply` engine's port of the
+> from the **`grammars/dataframe/`** grammar (the `ply` engine's port of the
 > confound / dataframe vocabulary), which is the authority — **not** the deleted
 > pre-`ply` `dfops.py`. Surfaces are grounded in
-> `src/gramform/grammars/minimaltest/grammar.py`.
+> `src/gramform/grammars/dataframe/grammar.py`.
 
 ## Governing rule: Wilkinson conventions take precedence
 
@@ -33,7 +33,7 @@ So `(rps + wm)^^2` (inclusive numeric power — confound idiom) is fine because
 
 ## Confound-specific operators (no Wilkinson collision — retained)
 
-| Surface | Primitive (minimaltest) | Meaning |
+| Surface | Primitive (dataframe) | Meaning |
 |---|---|---|
 | `^^` | `POWER_INCLUSIVE` → numeric `POWER(1..n)` | inclusive numeric power (keeps original) |
 | `d_` | `BACKDIFF` | backward difference (exclusive) |

@@ -4,10 +4,10 @@ Tests for the minimal grammar implementation.
 
 import pytest
 
-from gramform.grammars.minimaltest.grammar import (
-    MinimalGrammar,
+from gramform.grammars.dataframe.grammar import (
+    DataFrameGrammar,
 )
-from gramform.grammars.minimaltest.transform import (
+from gramform.grammars.dataframe.transform import (
     DataFrameContext,
     get_processor,
 )
@@ -20,7 +20,7 @@ from gramform.postprocessors import (
 def test_basic_arithmetic():
     """Test basic arithmetic operations."""
     expr = '(x+y+z)^^2+(x+y+z)+((x+y+z)^2+(x+y+z))^3.13-5'
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     lexer = grammar._lexer
     parser = grammar._parser
 
@@ -52,7 +52,7 @@ def test_basic_arithmetic():
 def test_indicators_and_backdiff():
     """Test indicator and backdiff operations."""
     expr = '(x+y+z)^2-3 + I_[x=y] + d_[1,4-5](x)'
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     lexer = grammar._lexer
     parser = grammar._parser
 
@@ -81,7 +81,7 @@ def test_indicators_and_backdiff():
 def test_complex_boolean_operations():
     """Test complex boolean operations with indicators and reductions."""
     expr = ':::!((I_[x=y] && I_[x=z]) || I_[x>=w]) + AND_(I_[x=y] + I_[x=z] + OR_(I_[x=w] + I_[x=v])) + v_{{test; x=1; y=2; z=3}}'
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     lexer = grammar._lexer
     parser = grammar._parser
 
@@ -111,7 +111,7 @@ def test_complex_boolean_operations():
 def test_common_subexpression_elimination():
     """Test common subexpression elimination."""
     expr = '(x+y+z)^^2 + (x+y+z)^^2 + (x+y+z)^^2'
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     parser = grammar._parser
 
     # Test parsing and postprocessing
@@ -133,7 +133,7 @@ def test_common_subexpression_elimination():
 def test_backdiff_with_common_subexpressions():
     """Test backdiff operations with common subexpressions."""
     expr = 'd_[1]((x+y)^^2 + (x+y)^^2) + d_[1]((x+y)^^2 + (x+y)^^2)'
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     parser = grammar._parser
 
     # Test parsing and postprocessing
@@ -156,7 +156,7 @@ def test_invalid_expressions():
         'x + [y]',  # Invalid bracket usage
     ]
 
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     parser = grammar._parser
 
     for expr in invalid_exprs:
@@ -167,7 +167,7 @@ def test_invalid_expressions():
 def test_reserved_words():
     """Test handling of reserved words."""
     expr = 'I_[x=y] + d_[1](x) + AND_(y) + OR_(z) + NOT_(w)'
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     lexer = grammar._lexer
     parser = grammar._parser
 
@@ -198,7 +198,7 @@ def test_reserved_words():
 
 def test_lexer_error_reporting():
     """Test that lexer errors provide detailed context."""
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     lexer = grammar._lexer
 
     # Test invalid character
@@ -232,7 +232,7 @@ def test_lexer_error_reporting():
 
 def test_parser_error_reporting():
     """Test that parser errors provide detailed context and suggestions."""
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     parser = grammar._parser
 
     # Test missing operand (EOF error)
@@ -292,7 +292,7 @@ def test_parser_error_reporting():
 
 def test_error_recovery_suggestions():
     """Test that error messages provide helpful recovery suggestions."""
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     parser = grammar._parser
 
     # Test incomplete expression (EOF error)
@@ -331,7 +331,7 @@ def test_error_recovery_suggestions():
 
 def test_multiline_error_reporting():
     """Test error reporting with multiline input."""
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     parser = grammar._parser
 
     # Test error in multiline expression (lexical error due to newline)
@@ -359,7 +359,7 @@ def test_multiline_error_reporting():
 
 def test_error_context_specificity():
     """Test that error messages are specific to the context."""
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     parser = grammar._parser
 
     # Test parameter context (use invalid syntax)
@@ -384,7 +384,7 @@ def test_error_context_specificity():
 
 def test_lalr1_state_analysis():
     """Test that error analysis uses LALR(1) state machine information."""
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     parser = grammar._parser
 
     # Test that error analysis provides state-specific information
@@ -405,7 +405,7 @@ def test_lalr1_state_analysis():
 
 def test_recovery_strategies():
     """Test that recovery strategies are attempted and reported."""
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     parser = grammar._parser
 
     # Test panic mode recovery suggestion (use valid syntax error)
@@ -429,7 +429,7 @@ def test_recovery_strategies():
 
 def test_error_analysis_components():
     """Test that error analysis components work correctly."""
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     parser = grammar._parser
 
     # Test that ParseState is properly updated
@@ -450,7 +450,7 @@ def test_error_analysis_components():
 
 def test_token_error_reporting():
     """Test that token errors provide detailed context."""
-    grammar = MinimalGrammar()
+    grammar = DataFrameGrammar()
     lexer = grammar._lexer
 
     # Test invalid character
@@ -484,7 +484,7 @@ def test_token_error_reporting():
 
 @pytest.mark.xfail(
     reason=(
-        'minimaltest DataFrame interpreter calls the drifted '
+        'dataframe DataFrame interpreter calls the drifted '
         'ExecutionContext.pop(field) API (core.pop() takes no args). The '
         'confound vocabulary it materialises now lives, emit-only, in '
         'gramform.grammars.nwx.covariate.lower_covariates (Phase 6); this '

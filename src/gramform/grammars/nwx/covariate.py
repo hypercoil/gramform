@@ -9,12 +9,12 @@ The :data:`CovariateProgram` is a closed union of :data:`CovariateOp`. ``nwx``
 module holds **no array** and imports neither ``jax``/``nitrix`` nor
 ``narwhals``/``numpy``.
 
-The confound vocabulary is parsed by the **`minimaltest`** grammar (the ``ply``
+The confound vocabulary is parsed by the **`dataframe`** grammar (the ``ply``
 port of the confound / dataframe surface -- the source of truth, transcribed in
 ``docs/nwx/covariate-vocabulary.md``, **not** the deleted ``dfops.py``).
 :func:`lower_covariates` reuses that grammar but applies a *pure, emit-only*
 interpreter over its AST that builds the nested :data:`CovariateOp` tree --
-unlike ``minimaltest.transform``, which materialises ``narwhals`` columns.
+unlike ``dataframe.transform``, which materialises ``narwhals`` columns.
 
 Wilkinson precedence (spec §6): where a glyph differs between the term algebra
 and the confound vocabulary, the **Wilkinson** meaning wins, so the
@@ -32,9 +32,9 @@ from typing import Literal, Union
 
 from gramform.core import Literal as CoreLiteral
 from gramform.core import Primitive
-from gramform.grammars.minimaltest.grammar import MinimalGrammar
+from gramform.grammars.dataframe.grammar import DataFrameGrammar
 
-# --- shorthand preprocessor expansions (from minimaltest) ------------------
+# --- shorthand preprocessor expansions (from dataframe) ------------------
 # ``csf`` is intentionally absent: it is a passthrough column name, NOT a
 # shorthand (a common slip the legacy README implied otherwise). An
 # unrecognised name is a plain column lookup, never an error.
@@ -176,9 +176,9 @@ _COMPARISONS: dict[str, Literal['eq', 'ne', 'lt', 'le', 'gt', 'ge']] = {
 
 
 @lru_cache(maxsize=1)
-def _grammar() -> MinimalGrammar:
+def _grammar() -> DataFrameGrammar:
     """The confound-vocabulary grammar (built once)."""
-    return MinimalGrammar()
+    return DataFrameGrammar()
 
 
 def lower_covariates(formula: str) -> CovariateProgram:

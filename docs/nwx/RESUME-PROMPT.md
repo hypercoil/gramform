@@ -322,7 +322,7 @@ Random effects (lme4 bar-in-parens) now parse and emit `RandomEffectSpec`.
   dep; `pyright` scoped to `src/gramform/grammars/nwx`; CI on feature branches;
   coverage floor ratcheted 90→68 (currently ~69%, climb as nwx lands).
 - New gate tests in `tests/nwx/`: import firewall (no `jax`/`nitrix`) +
-  parser-conflict freedom. One pre-existing `minimaltest` transform test is
+  parser-conflict freedom. One pre-existing `dataframe` transform test is
   `xfail`ed (API drift, fixed in Phase 6).
 - **Verified: 80 passed / 1 xfailed; `ruff check` + `ruff format --check` on
   `src/gramform` clean; coverage gate ≥68% PASS.**
@@ -365,14 +365,14 @@ Phases 1–5 are DONE (M1–M3). Two phases remain:
 
 **Phase 6 — `CovariateProgram` completeness** (`implementation-plan.md` Phase 6;
 disjoint `covariate.py`, independent of the grammar). Extend the minimal Phase-1
-`CovariateOp` set to the full closed union harvested from `grammars/minimaltest/`
+`CovariateOp` set to the full closed union harvested from `grammars/dataframe/`
 (`Shorthand`, `Derivative`, `Power`, `CompCorSelect` via `{{…}}`, `Indicator`,
 `SetOp`, `Scatter`); wire covariate shorthands into the term interpreter (they
 are defined but NOT yet lowered into terms — `csf` is passthrough, not a
 shorthand). Shorthand expansions as a preprocessor (the
 `confound_formula_preprocessor` pattern). **Emit-only** (nwx holds no array).
 Tests: 36P `(dd_(rps+wm+csf+gsr))^^2`, spike `:::`/`OR_`/`I_`, aCompCor `v_`
-→ expected `CovariateProgram` + term set. Fixes the one `xfail`ed `minimaltest`
+→ expected `CovariateProgram` + term set. Fixes the one `xfail`ed `dataframe`
 transform test (API drift).
 
 **Phase 7 — validation, errors, contract, BIDS-SM importer** (last).
@@ -418,9 +418,9 @@ risk register). Design rationale + grammar resolutions: **`docs/nwx/spec.md`**.
 - **PLY has no `parser.conflicts`.** Use the `errorlog`-capture hook /
   `DynamicGrammar.conflicts` already wired in `core.py`.
 - The `{{...}}` directive block must use an **EXCLUSIVE** lexer state for `nwx`
-  (the `minimaltest` push/pop pattern is *inclusive* — copy the idea, make it
+  (the `dataframe` push/pop pattern is *inclusive* — copy the idea, make it
   exclusive so `:`/`=` don't collide with default-state tokens).
-- **Harvest the confound vocabulary from `grammars/minimaltest/`**, NOT the
+- **Harvest the confound vocabulary from `grammars/dataframe/`**, NOT the
   deleted legacy `dfops.py`. The harvested rules are in
   `docs/nwx/covariate-vocabulary.md`. **`csf` is NOT a shorthand** (passthrough).
 - **Wilkinson precedence wins on shared glyphs** (`^`, `-`, `||`) — see spec §6.
@@ -438,7 +438,7 @@ risk register). Design rationale + grammar resolutions: **`docs/nwx/spec.md`**.
 - `docs/nwx/spec.md` — grammar + IR + engine-contract design.
 - `docs/nwx/implementation-plan.md` — phases 0–7, file-by-file.
 - `docs/nwx/covariate-vocabulary.md` — Phase-6 confound vocabulary (harvested).
-- `src/gramform/core.py`, `grammars/wilkinson/`, `grammars/minimaltest/`,
+- `src/gramform/core.py`, `grammars/wilkinson/`, `grammars/dataframe/`,
   `postprocessors.py` — the substrate to build on.
 - `nitrix/docs/feature-requests/stats-modelling-suite-v3.md` — the engine-side
   kernel gaps nwx surfaces.

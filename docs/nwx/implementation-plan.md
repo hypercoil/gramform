@@ -8,7 +8,7 @@
 > vertical slice** is sequenced as Phase 2 (formula→results for the Gaussian
 > GLM-with-confounds path, on already-shipped nitrix kernels, via a real
 > reference engine that lives *outside* `gramform`); (b) the confound vocabulary
-> is harvested from **`grammars/minimaltest/`** (the new-core port), not the
+> is harvested from **`grammars/dataframe/`** (the new-core port), not the
 > legacy `dfops.py`; (c) the parser-conflict gate is implemented via a captured
 > `errorlog` (PLY has no `parser.conflicts`); (d) CI/nox discipline is made to
 > actually bind; (e) the AST→IR interpreter is split by feature family; (f)
@@ -45,7 +45,7 @@
 
 ## Phase 0 — Cleanup, substrate adoption, gating infra  *(S–M)*
 
-**Goal.** Remove the pre-`ply` modules; adopt `minimaltest` as the confound-
+**Goal.** Remove the pre-`ply` modules; adopt `dataframe` as the confound-
 vocabulary base; make the firewall and the gates real.
 
 **Tasks.**
@@ -59,8 +59,8 @@ vocabulary base; make the firewall and the gates real.
    import `ConfoundFormulaGrammar`/`DataTagGrammar`; these top-level exports are
    already commented out in `__init__.py`) are being rebuilt.
 2. **Keep** `resampler.py`, `error.py` (core depends on them) and
-   `grammars/minimaltest/` (the confound-vocabulary base for Phase 6).
-3. **Generate** `docs/nwx/covariate-vocabulary.md` *from* `minimaltest`'s
+   `grammars/dataframe/` (the confound-vocabulary base for Phase 6).
+3. **Generate** `docs/nwx/covariate-vocabulary.md` *from* `dataframe`'s
    surfaces (`confound_formula_preprocessor`, `d_/dd_`, `^^`, `v_`, `I_`,
    `AND_/OR_/NOT_`, `:::`) — the Phase-6 source of truth. Note `csf` is **not** a
    shorthand (passthrough).
@@ -221,9 +221,9 @@ both meanings.
 
 ## Phase 6 — `CovariateProgram` completeness  *(S–M)*
 
-**File.** `covariate.py` (extend `minimaltest`).
+**File.** `covariate.py` (extend `dataframe`).
 
-- Full closed-union `CovariateOp` set from the `minimaltest` surfaces
+- Full closed-union `CovariateOp` set from the `dataframe` surfaces
   (`Shorthand`, `Derivative`, `Power`, `CompCorSelect` via `{{…}}`, `Indicator`,
   `SetOp`, `Scatter`). Shorthand expansions as a preprocessor (the
   `confound_formula_preprocessor` pattern). Emit-only.
@@ -307,6 +307,6 @@ consumers is accepted per the owner — they are being rebuilt.)*
   (the `lme_fit` structure-dispatch ladder, GAMM surfacing, non-aggressive
   residualisation, dof, families).
 - Substrate: `src/gramform/core.py`, `grammars/wilkinson/`,
-  `grammars/minimaltest/`, `postprocessors.py`; harvested vocabulary:
+  `grammars/dataframe/`, `postprocessors.py`; harvested vocabulary:
   `docs/nwx/covariate-vocabulary.md` (Phase 0).
 ```

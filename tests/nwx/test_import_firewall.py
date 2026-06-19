@@ -19,7 +19,7 @@ import importlib, sys
 MODULES = [
     "gramform.core",
     "gramform.grammars.wilkinson.transform",
-    "gramform.grammars.minimaltest.transform",
+    "gramform.grammars.dataframe.transform",
 ]
 # Forward-compat: include the nwx surface once it exists (Phase 1+).
 try:

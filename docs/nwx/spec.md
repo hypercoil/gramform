@@ -6,7 +6,7 @@
 > (engineering rigour, statistical correctness, community usefulness, design /
 > abstraction). Branch `nwx` (off `ply`). Builds on the Wilkinson
 > proof-of-concept in `src/gramform/grammars/wilkinson/` and the confound
-> vocabulary already ported to `src/gramform/grammars/minimaltest/`. The
+> vocabulary already ported to `src/gramform/grammars/dataframe/`. The
 > implementation plan is `docs/nwx/implementation-plan.md`.
 >
 > **Review-driven changes in this revision:** residualisation is now
@@ -87,7 +87,7 @@ import surface pulls in neither `jax` nor `nitrix`; a CI test asserts this
 2. **Model directives** (family, link, estimator, error structure, contrasts,
    inference) live in a trailing `{{ … }}` block, node-scoped (§4.5), parsed in
    a dedicated **exclusive** lexer state (the `{{…}}` push/pop-state pattern is
-   demonstrated in `grammars/minimaltest/`).
+   demonstrated in `grammars/dataframe/`).
 3. **Random effects** use the lme4 bar-in-parens idiom: `(1 + x | g)`,
    `(x || g)`, `(1 | g1/g2)`, `(1 | g1:g2)`.
 4. **`nwx` is emit-only** for covariates: it returns a `CovariateProgram`; the
@@ -148,7 +148,7 @@ needed by `correlation=`/contrasts must be defined so as not to collide with
 
 **New lexer state `spec` — EXCLUSIVE** (entered on `{{`, exited on `}}`), built
 on `core`'s `push_state_and_return`/`pop_state_and_return` (the pattern
-`grammars/minimaltest/` uses for its `param` block — note `minimaltest`'s state
+`grammars/dataframe/` uses for its `param` block — note `dataframe`'s state
 is *inclusive*; `nwx`'s must be **exclusive** so the directive mini-language's
 `:` (contrasts clause) and `=` (key/value) do **not** collide with the default
 state's `INTERACTION_ONLY (:)` and `ASSIGN (=)`). The `spec` state defines its
@@ -437,7 +437,7 @@ function fires).
 
 `nwx` emits — never executes (decision 4) — a `CovariateProgram = tuple[
 CovariateOp, ...]` (`CovariateOp` a **closed union**). The source of truth is
-`grammars/minimaltest/` (the `ply`-engine port of the confound vocabulary),
+`grammars/dataframe/` (the `ply`-engine port of the confound vocabulary),
 **not** the pre-`ply` `dfops.py`.
 
 **Wilkinson precedence (governing rule).** `nwx` is a Wilkinson extension first:
@@ -449,7 +449,7 @@ not set-union). The confound layer contributes only its non-colliding operators
 needs are redirected (numeric power → `^^`; ranges → parameter block; set-union
 → `OR_`). Full table: `docs/nwx/covariate-vocabulary.md`. Operators:
 
-| Surface (minimaltest) | `CovariateOp` | Notes |
+| Surface (dataframe) | `CovariateOp` | Notes |
 |---|---|---|
 | `rps`, `wm`, `gsr`, `acc`, `fd`, `dv`, `wcc`, `ccc` | `Shorthand` | preprocessor expansion (`csf` is **not** a shorthand — passthrough column) |
 | `d_`, `dd_` | `Derivative(order, inclusive)` | backward difference |
@@ -618,9 +618,9 @@ y ~ s(age, by=dx)         # WARNING: factor by= without the dx main effect
 ```
 grammars/nwx/
   grammar.py       # RanefComponent, DirectiveComponent (exclusive spec state),
-                   #   PipelineComponent, ResidualComponent  (+ reuse wilkinson, minimaltest)
+                   #   PipelineComponent, ResidualComponent  (+ reuse wilkinson, dataframe)
   spec.py          # the ModelSpec IR (frozen dataclasses, closed unions, Diagnostic/Carry)
-  covariate.py     # CovariateProgram (closed-union CovariateOp; extends minimaltest)
+  covariate.py     # CovariateProgram (closed-union CovariateOp; extends dataframe)
   transform.py          # core term-algebra AST→IR ops (Phase 1)
   transform_ranef.py    # random-effects ops          (Phase 3)
   transform_smooth.py   # smooth ops                  (Phase 4)
@@ -641,4 +641,4 @@ shared `InterpretersDispatch` group) so Phases 3/4/5 touch disjoint files. A new
   structure-dispatch ladder, GAMM surfacing, non-aggressive residualisation,
   dof, families) and predecessors v1/v2.
 - Substrate: `src/gramform/core.py`, `src/gramform/grammars/wilkinson/`,
-  `src/gramform/grammars/minimaltest/`, `src/gramform/postprocessors.py`.
+  `src/gramform/grammars/dataframe/`, `src/gramform/postprocessors.py`.

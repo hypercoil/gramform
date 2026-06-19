@@ -32,7 +32,7 @@ dependencies = [
 wilkinson = [
     "formulaic",
 ]
-# The dataframe / covariate (``minimaltest``) interpreters operate via narwhals.
+# The ``grammars/dataframe`` materialising interpreter operates via narwhals.
 dataframe = [
     "narwhals",
     "numpy",

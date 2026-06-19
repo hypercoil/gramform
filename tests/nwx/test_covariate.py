@@ -4,7 +4,7 @@
 """
 Phase-6 ``CovariateProgram`` — the full confound vocabulary, emit-only.
 
-``lower_covariates`` parses a confound-formula string (via the ``minimaltest``
+``lower_covariates`` parses a confound-formula string (via the ``dataframe``
 grammar) into a nested closed-union ``CovariateProgram``; nwx holds no array.
 Covers the 36P idiom, aCompCor selection, indicator / scatter spikes, set
 reductions, and the shorthand table (``csf`` is a passthrough column).

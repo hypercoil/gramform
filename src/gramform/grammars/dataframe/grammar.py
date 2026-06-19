@@ -2,9 +2,18 @@
 # emacs: -*- mode: python; py-indent-offset: 4; indent-tabs-mode: nil -*-
 # vi: set ft=python sts=4 ts=4 sw=4 et:
 """
-DataFrames
-~~~~~~~~~~
-Grammar for DataFrame operations.
+DataFrame / confound-vocabulary grammar
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+A grammar for DataFrame column expressions and a compact confound-formula
+vocabulary (shorthands, ``d_``/``dd_`` differences, ``^^`` numeric power,
+``v_``/``n_`` component selection, ``I_`` indicators, ``AND_``/``OR_``/``NOT_``
+reductions, ``:::`` scatter). The vocabulary is this project's own surface; it
+*expands to* fMRIPrep / BIDS-style confound column names (e.g. ``rps`` ->
+``trans_x``..``rot_z``, ``wm`` -> ``white_matter``, ``fd`` ->
+``framewise_displacement``). It is the source of truth harvested by the ``nwx``
+covariate layer (:func:`gramform.grammars.nwx.covariate.lower_covariates`
+parses confound formulae through it, emit-only); ``transform.py`` here is a
+separate ``narwhals`` materialiser.
 """
 
 from dataclasses import dataclass
@@ -572,7 +581,7 @@ class SpecialOperatorsComponent(GrammarComponent):
     )
 
 
-class MinimalGrammar(DynamicGrammar):
+class DataFrameGrammar(DynamicGrammar):
     """Grammar for DataFrame operations using composable components."""
 
     def __init__(self):
