@@ -36,11 +36,13 @@ def typecheck(session):
 @nox.session()
 def report(session):
     session.install('coverage[toml]')
-    # Ratcheting floor: the pre-nwx substrate sits at ~69%; raise this toward
-    # the sibling standard (90+) as the typed nwx surface lands with tests.
+    # Ratcheting floor: now that the typed, well-tested nwx surface has landed
+    # (phases 1-7), the total sits at ~78%. Raise this toward the sibling
+    # standard (90+) as the legacy `grammars/dataframe` narwhals materialiser
+    # (~31%, the largest uncovered surface) gains tests or is retired.
     session.run(
         'coverage',
-        'report', '--fail-under=68',
+        'report', '--fail-under=78',
         "--omit='*test*,*__init__*'",
     )
     session.run(

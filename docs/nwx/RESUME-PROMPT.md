@@ -320,7 +320,9 @@ Random effects (lme4 bar-in-parens) now parse and emit `RandomEffectSpec`.
 - Dev suite modernised to match siblings: `ruff format` (single-quote, line 79)
   replaced `blue`; Python 3.12–3.14; `requires-python>=3.12`; `pydantic` a core
   dep; `pyright` scoped to `src/gramform/grammars/nwx`; CI on feature branches;
-  coverage floor ratcheted 90→68 (currently ~69%, climb as nwx lands).
+  coverage floor ratcheted 90→68 in Phase 0 (later raised to 78 once the nwx
+  surface landed; the legacy `grammars/dataframe` materialiser at ~31% is the
+  drag — give it tests or retire it to climb toward 90).
 - New gate tests in `tests/nwx/`: import firewall (no `jax`/`nitrix`) +
   parser-conflict freedom. One pre-existing `dataframe` transform test is
   `xfail`ed (API drift, fixed in Phase 6).
