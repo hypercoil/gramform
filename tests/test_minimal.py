@@ -485,8 +485,10 @@ def test_token_error_reporting():
 @pytest.mark.xfail(
     reason=(
         'minimaltest DataFrame interpreter calls the drifted '
-        'ExecutionContext.pop(field) API (core.pop() takes no args); the '
-        'interpreter is reworked into the nwx CovariateProgram in Phase 6.'
+        'ExecutionContext.pop(field) API (core.pop() takes no args). The '
+        'confound vocabulary it materialises now lives, emit-only, in '
+        'gramform.grammars.nwx.covariate.lower_covariates (Phase 6); this '
+        'data-materialising interpreter is legacy and unmaintained.'
     ),
     strict=False,
 )
