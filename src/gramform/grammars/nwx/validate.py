@@ -21,9 +21,9 @@ checked here:
 - **WARNING** -- a smooth ``by=`` factor without its parametric main effect
   (the identifiability check deferred from Phase 4); aggressive residualisation
   given a ``signal()`` set (ignored); and a **backend-awareness roll-up**:
-  every IR feature whose nitrix kernel is not yet shipped (spec §7), as
-  Diagnostics so a report is complete without capturing the parse-time
-  warnings.
+  every IR feature whose nitrix kernel is not shipped (spec §7) -- now a sole
+  intentional residual, RFT inference -- as Diagnostics so a report is complete
+  without capturing the parse-time warnings.
 - **ERROR** -- multi-level graph integrity: each ``Edge`` endpoint names a real
   node, each ``Edge.carry.contrast`` resolves to a real upstream
   ``ContrastSpec``, and the edges form a DAG.
@@ -125,48 +125,22 @@ def _check_backend_awareness(
     where: str,
     spec: ModelSpec,
 ) -> Iterator[Diagnostic]:
-    """Roll up every IR feature the reference backend cannot yet run, so
-    ``validate`` gives a complete forward-compatibility report. nitrix
-    stats-suite v3 ships nwx's whole v1 scope (see
-    :mod:`gramform.grammars.nwx.backend`), so this is now a short residual:
-    non-canonical links, the ``soft`` residualise mode, RFT inference, and a
-    non-Gaussian random *slope*."""
-    fam = spec.family
-    if not backend.link_shipped(fam.link):
-        yield _backend(
-            f'link {fam.link.value!r} is not a nitrix built-in (only the '
-            'canonical identity/log/logit ship; others need a hand-built '
-            'Family)',
-            where,
-        )
-
-    # GLMM random slope: glmm_fit ships scalar RE only; a non-scalar random
-    # effect under a non-Gaussian family is the Tier-2 deferral (a Gaussian
-    # random slope is shipped via lme_fit R2, so it is not flagged).
-    for re in spec.random:
-        if backend.glmm_random_slope_unshipped(re.structure, fam.family):
-            yield _backend(
-                f'a {re.structure.value!r} random effect under family '
-                f'{fam.family.value!r} (a non-Gaussian random slope) is not '
-                'yet shipped; glmm_fit fits a scalar random effect only',
-                where,
-            )
-
-    for res in spec.residualise:
-        if not backend.residualise_mode_shipped(res.mode):
-            yield _backend(
-                f'residualise={res.mode.value!r} is not yet shipped (nitrix '
-                'ships aggressive + nonaggressive)',
-                where,
-            )
-
+    """Roll up every IR feature the reference backend does not run, so
+    ``validate`` gives a complete forward-compatibility report. The nitrix
+    stats-suite GP branch ships nwx's whole expressible surface -- families,
+    links (incl. non-canonical via ``Family.with_link``), every random-effect
+    structure under every family (``glmm_fit`` slopes), all smooth bases, and
+    all three residualise modes (see :mod:`gramform.grammars.nwx.backend`). The
+    **sole** residual is RFT inference, which is *intentionally* omitted (its
+    known failure modes), not pending."""
     inf = spec.inference
     if inf is not None and not backend.inference_correction_shipped(
         inf.correction
     ):
         yield _backend(
-            f'inference correction {inf.correction!r} is not yet shipped '
-            '(nitrix ships permutation/TFCE/cluster/FDR/Bonferroni)',
+            f'inference correction {inf.correction!r} is intentionally not '
+            'shipped (random-field theory is omitted for its known failure '
+            'modes; nitrix ships permutation/TFCE/cluster/FDR/Bonferroni)',
             where,
         )
 

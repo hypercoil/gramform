@@ -127,18 +127,22 @@ def _fit_call(
         )
     if spec.random:
         family = spec.family.family
-        # A non-Gaussian family + random effect -> GLMM (glmm_fit, scalar RE
-        # only); a Gaussian random effect -> reml_fit (R1) / lme_fit (R2-R4).
+        # A non-Gaussian family + random effect -> GLMM (glmm_fit: scalar RE
+        # plus diagonal/unstructured random slopes via PQL / Laplace / AGQ); a
+        # Gaussian random effect -> reml_fit (R1) / lme_fit (R2-R4).
         if family is not Family.GAUSSIAN:
-            structures = {re.structure for re in spec.random}
-            slope = any(
-                backend.glmm_random_slope_unshipped(s, family)
-                for s in structures
+            scalar = all(
+                re.structure is Structure.SCALAR for re in spec.random
+            )
+            detail = (
+                'scalar RE (PQL / Laplace)'
+                if scalar
+                else 'random slopes (PQL / Laplace / AGQ)'
             )
             return Call(
                 'glmm_fit',
-                f'{family.value} GLMM, scalar RE (PQL / Laplace)',
-                shipped=not slope,
+                f'{family.value} GLMM, {detail}',
+                shipped=True,
             )
         scalar = (
             len(spec.random) == 1
@@ -199,7 +203,7 @@ def _inference_call(inf) -> Call:
     if correction == 'rft':
         return Call(
             'rft',
-            'random-field-theory FWE',
+            'random-field-theory FWE (intentionally not shipped)',
             shipped=backend.inference_correction_shipped(correction),
         )
     return Call('parametric', f'parametric correction={correction}')

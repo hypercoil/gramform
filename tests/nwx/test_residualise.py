@@ -154,9 +154,11 @@ def test_nonaggressive_does_not_emit_backend_warning(process):
         )
 
 
-def test_soft_residualise_emits_backend_warning(process):
-    # `soft` (§5.2) is the one residualise mode nitrix does not yet ship.
-    with pytest.warns(BackendWarning, match='soft'):
+def test_soft_residualise_does_not_emit_backend_warning(process):
+    # `soft` (FR §5.2) now ships -- the ridge / James-Stein shrunk
+    # `partial_residualise`.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', BackendWarning)
         process('bold ~| noise(n) + signal(s) {{ residualise=soft }}')
 
 

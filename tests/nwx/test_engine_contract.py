@@ -67,12 +67,12 @@ def test_nonscalar_random_is_lme(process):
     assert root.calls[0].shipped  # R2 (block-Woodbury) ships in nitrix v3
 
 
-def test_nongaussian_random_slope_is_unshipped_glmm(process):
-    # glmm_fit ships a scalar RE only -> a non-Gaussian random slope is the
-    # one random-effect case still gated.
+def test_nongaussian_random_slope_is_shipped_glmm(process):
+    # glmm_fit now fits random slopes (diagonal / unstructured) under a
+    # non-Gaussian family via PQL / Laplace / AGQ -- so it ships.
     root = node(plan(process, 'y ~ x + (1+x|g) {{ family=binomial }}'), 'root')
     assert root.route == 'glmm_fit'
-    assert not root.calls[0].shipped
+    assert root.calls[0].shipped
 
 
 def test_smooth_is_gam(process):
@@ -103,13 +103,15 @@ def test_f_contrast_for_f_test(process):
     assert 'f_contrast' in routines(root)
 
 
-def test_glm_families_ship_but_noncanonical_link_does_not(process):
-    # all nwx families ship in v3; the residual is a non-canonical link.
+def test_glm_families_and_noncanonical_links_ship(process):
+    # all nwx families ship; non-canonical links ship too, composed onto a
+    # family via Family.with_link (the GP branch).
     for family in ('binomial', 'gamma', 'tweedie'):
         glm = node(plan(process, f'y ~ x {{{{ family={family} }}}}'), 'root')
         assert glm.calls[0].routine == 'glm_fit' and glm.calls[0].shipped
-    probit = node(plan(process, 'y ~ x {{ link=probit }}'), 'root')
-    assert not probit.calls[0].shipped
+    for link in ('probit', 'inverse', 'sqrt'):
+        glm = node(plan(process, f'y ~ x {{{{ link={link} }}}}'), 'root')
+        assert glm.calls[0].shipped
 
 
 @pytest.mark.parametrize(

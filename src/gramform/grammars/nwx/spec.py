@@ -54,26 +54,28 @@ class Family(Enum):
 
 class Link(Enum):
     """Link function. The first three are each a nitrix family's *canonical*
-    link (shipped); ``PROBIT`` / ``INVERSE`` / ``SQRT`` are not built-in (they
-    need a hand-built ``Family``) -- see
+    link; ``PROBIT`` / ``INVERSE`` / ``SQRT`` are non-canonical but ship too --
+    real ``Link`` implementations composed onto a family via
+    ``Family.with_link`` (the IRLS consumes their ``mu_eta``). See
     :mod:`gramform.grammars.nwx.backend`."""
 
     IDENTITY = 'identity'
     LOG = 'log'
     LOGIT = 'logit'
-    # not a nitrix built-in (canonical links only)
+    # non-canonical, shipped via Family.with_link
     PROBIT = 'probit'
     INVERSE = 'inverse'
     SQRT = 'sqrt'
 
 
 class Mode(Enum):
-    """Residualisation mode. ``AGGRESSIVE`` + ``NONAGGRESSIVE`` ship
-    (``partial_residualise``, §5.1); ``SOFT`` (§5.2) is not yet shipped."""
+    """Residualisation mode. All three ship: ``AGGRESSIVE`` (``residualise``) +
+    ``NONAGGRESSIVE`` (``partial_residualise``, §5.1) + ``SOFT`` (the ridge /
+    James-Stein shrunk ``partial_residualise``, FR §5.2)."""
 
     AGGRESSIVE = 'aggressive'
     NONAGGRESSIVE = 'nonaggressive'
-    # not yet shipped (nitrix §5.2)
+    # ridge / James-Stein shrunk partial_residualise (FR §5.2)
     SOFT = 'soft'
 
 
@@ -448,11 +450,12 @@ class Diagnostic:
 
 class BackendWarning(UserWarning):
     """A backend-awareness warning: the emitted IR is well-formed but lowers
-    onto a reference-backend (``nitrix``) kernel that is not yet shipped. As of
-    stats-suite v3 this is a short residual (non-canonical link, ``soft``
-    residualise, RFT inference, non-Gaussian random slope); the authoritative
-    capability set is :mod:`gramform.grammars.nwx.backend`. Emitted at parse
-    time for forward-compatible specs (spec §7 / §8)."""
+    onto a reference-backend (``nitrix``) kernel that is not shipped. As of the
+    stats-suite GP branch the **sole** such kernel is RFT inference, which is
+    *intentionally* omitted (its known failure modes) -- a permanent exclusion,
+    not a deferral; the authoritative capability set is
+    :mod:`gramform.grammars.nwx.backend`. Emitted at parse time for
+    forward-compatible specs (spec §7 / §8)."""
 
 
 @runtime_checkable

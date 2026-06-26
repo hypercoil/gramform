@@ -257,11 +257,11 @@ def test_residual_operator_still_lexes():
 
 
 # ---------------------------------------------------------------------------
-# backend awareness (spec §7): every random-effect structure ships in nitrix
-# v3 -- scalar (reml_fit R1), correlated/diagonal (lme_fit R2), nested/crossed
-# (lme_fit inner=/cross= R3/R4) -- so a random effect never warns at parse.
-# (The one residual, a non-Gaussian random slope, is family-dependent and is
-# flagged by `validate` over the assembled spec -- see test_validate.)
+# backend awareness (spec §7): every random-effect structure ships -- scalar
+# (reml_fit R1), correlated/diagonal (lme_fit R2), nested/crossed (lme_fit
+# inner=/cross= R3/R4) for Gaussian, and the same structures under a
+# non-Gaussian family via glmm_fit random slopes (PQL / Laplace / AGQ) -- so a
+# random effect never warns at parse, and none roll up at validate either.
 # ---------------------------------------------------------------------------
 
 

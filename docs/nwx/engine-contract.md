@@ -28,35 +28,36 @@
 ## Dispatch table (populated IR fields → `nitrix` route)
 
 Checked **in order** — the first match is the cheapest exact route. `✅` = the
-kernel ships today. **As of nitrix stats-suite v3 (merged 2026-06), every route
-below ships** — v3 delivered nwx's whole v1 scope; the residual `⚠️` cases are
-the handful of features nwx can express that v3 does not yet implement. The
-single source of truth for this status is `gramform.grammars.nwx.backend`.
+kernel ships. **As of the nitrix stats-suite GP branch (`feat/stats-gp`), every
+route below ships** — it closes v3's three residuals (non-canonical links,
+non-Gaussian random slopes, the `soft` residualise mode), so every IR axis nwx
+can express now lowers onto a shipped kernel. The single source of truth for
+this status is `gramform.grammars.nwx.backend`.
 
 | Populated (in priority order) | Route | Status |
 |---|---|---|
 | node is an `Edge.dest` (fed by copes) | `flame_two_level` (FE/ME by `combine`) | ✅ |
 | `residualise` (a `~\|` frame) | `linalg.residualise` (aggressive) | ✅ |
 | ″ with `mode=nonaggressive` | `partial_residualise` (ICA-AROMA, §5.1) | ✅ |
-| ″ with `mode=soft` | — (§5.2) | ⚠️ not shipped |
-| `random` + a **non-Gaussian** family | `glmm_fit` (PQL / Laplace, scalar RE) | ✅ scalar; ⚠️ random *slope* |
+| ″ with `mode=soft` | `partial_residualise` (ridge `l2=` / `shrinkage='james-stein'`, FR §5.2) | ✅ |
+| `random` + a **non-Gaussian** family | `glmm_fit` (scalar RE; random slopes via PQL / Laplace / AGQ) | ✅ |
 | `smooth` present | `gam_fit` (+ `re`/`fs` GAMM blocks if `random`) | ✅ (ps/cc/tp/te, cr/gp/mrf, re/fs) |
 | `random` present, one `scalar` spec | `reml_fit` (R1) | ✅ |
 | `random` non-scalar / nested / crossed | `lme_fit` structure-dispatch (R2–R4) | ✅ §1.1 |
 | `partial` present | `glm_fit` — FWL (design includes the partial block; the contrast loads only on the signal columns) | ✅ |
-| only `fixed` | `glm_fit` (family/link) | ✅ all families; ⚠️ non-canonical link (probit/inverse/sqrt) |
+| only `fixed` | `glm_fit` (family/link, incl. non-canonical via `Family.with_link`) | ✅ all families + all links |
 
 Then, per node: each `ContrastSpec` → `t_contrast` / `f_contrast` for a GLM,
 `lme_t_contrast` / `lme_f_contrast` (Satterthwaite or `dof='kr'`
 Kenward–Roger, §1.3) for an LME — **both ✅**; and the node-level
 `InferenceSpec` → `permutation_test` (Freedman–Lane, voxel / TFCE / cluster
-max-stat FWE, ✅) / `fdr_bh` / `bonferroni` (✅) / `rft` (⚠️ **not shipped** —
-nitrix has no random-field-theory kernel).
+max-stat FWE, ✅) / `fdr_bh` / `bonferroni` (✅) / `rft` (⚠️ **intentionally not
+shipped** — random-field theory is omitted for its known failure modes).
 
-**The residual unshipped set** (what `validate` / `backend` still flag): a
-non-canonical link (`probit`/`inverse`/`sqrt` — nitrix families carry only the
-canonical link), the `soft` residualise mode (§5.2), RFT inference, and a
-non-Gaussian random *slope* (`glmm_fit` fits a scalar random effect only).
+**The residual unshipped set** (what `validate` / `backend` still flag) is now a
+single, *intentional* exclusion: **RFT inference** — deliberately omitted for
+its known failure modes, a permanent exclusion rather than a deferral.
+Everything else nwx can express lowers onto a shipped kernel.
 
 ## Multi-level: cope/varcope propagation, FE vs ME
 

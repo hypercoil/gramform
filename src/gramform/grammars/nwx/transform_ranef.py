@@ -167,11 +167,12 @@ def RANDOM_EFFECT_impl(node: Primitive, context: NwxContext) -> NwxContext:
         for factors in components
     )
 
-    # Backend awareness (spec §7): scalar (`reml_fit` R1), correlated/diagonal
-    # (`lme_fit` R2), and nested/crossed (`lme_fit(inner=/cross=)` R3/R4) all
-    # ship in nitrix v3 -- no warning. The one residual, a *non-Gaussian*
-    # random slope (glmm_fit is scalar-RE only), needs the family, which is a
-    # later directive; it is flagged in `validate` over the assembled spec.
+    # Backend awareness (spec §7): every random-effect structure ships --
+    # scalar (`reml_fit` R1), correlated/diagonal (`lme_fit` R2), and
+    # nested/crossed (`lme_fit(inner=/cross=)` R3/R4) for Gaussian; the same
+    # structures under a non-Gaussian family via `glmm_fit` random slopes (PQL
+    # / Laplace / AGQ). No random effect warns at parse or rolls up at
+    # validate.
 
     context = context.update_state(random=context.state.random + specs)
     # A random effect contributes no fixed terms.

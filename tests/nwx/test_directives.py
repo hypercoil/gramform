@@ -72,7 +72,9 @@ def test_inference_permutation():
 def test_inference_cluster_mass_alias_and_parametric():
     d = parse_directives('inference=permutation(cluster_mass, n=100)')
     assert d.inference.enhancement == 'cluster_mass'
-    p = parse_directives('inference=parametric(rft)')
+    with warnings.catch_warnings():  # rft warns (intentional); not under test
+        warnings.simplefilter('ignore', BackendWarning)
+        p = parse_directives('inference=parametric(rft)')
     assert p.inference.kind == 'parametric'
     assert p.inference.correction == 'rft'
 
@@ -159,20 +161,19 @@ def test_malformed_correlation_warns():
 # ---------------------------------------------------------------------------
 
 
-# nitrix v3 ships families, robust/cluster SEs, Satterthwaite/KR dof, and error
-# correlation + heteroscedasticity. The residual reachable from a directive is
-# a non-canonical link and the `soft` residualise mode.
+# The nitrix GP branch ships every directive-reachable axis -- families,
+# non-canonical links (Family.with_link), robust/cluster SEs, Satterthwaite/KR
+# dof, error correlation + heteroscedasticity, and all residualise modes. The
+# *sole* residual reachable from a directive is RFT inference, intentionally
+# omitted for its known failure modes.
 @pytest.mark.parametrize(
     'text',
     [
-        'link=probit',
-        'link=inverse',
-        'link=sqrt',
-        'residualise=soft',
+        'inference=parametric(rft)',
     ],
 )
 def test_backend_awareness_warns(text):
-    with pytest.warns(BackendWarning):
+    with pytest.warns(BackendWarning, match='intentionally not shipped'):
         parse_directives(text)
 
 
@@ -180,14 +181,19 @@ def test_backend_awareness_warns(text):
     'text',
     [
         'family=binomial; link=logit; estimator=reml',
-        'family=gamma',  # v3 §4
-        'se=robust(hc3)',  # v3 §6.2
+        'family=gamma',  # §4
+        'link=probit',  # non-canonical link via Family.with_link
+        'link=inverse',
+        'link=sqrt',
+        'se=robust(hc3)',  # §6.2
         'se=cluster(subject)',
-        'dof=satterthwaite',  # v3 §1.3
+        'dof=satterthwaite',  # §1.3
         'dof=kr',
-        'correlation=ar1(time | g)',  # v3 §1.4
+        'correlation=ar1(time | g)',  # §1.4
         'weights=varPower(x)',
-        'residualise=nonaggressive',  # v3 §5.1
+        'residualise=nonaggressive',  # §5.1
+        'residualise=soft',  # FR §5.2 (ridge / James-Stein shrunk)
+        'inference=parametric(fdr)',  # FDR-BH ships
     ],
 )
 def test_shipped_directives_do_not_warn(text):

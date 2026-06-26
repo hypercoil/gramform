@@ -10,8 +10,9 @@ fragments it populates -- :class:`FamilySpec`, :class:`EstimationSpec`,
 node-level ``level`` / ``group_by`` / ``combine``. Recognised v1 keys (spec
 §4.5): ``family``, ``link``, ``estimator``, ``correlation``, ``weights``,
 ``se``, ``dof``, ``level``, ``group_by``, ``combine``, ``contrasts``,
-``inference``. Unknown keys warn (forward-compat), never error; directives
-whose nitrix kernel is not yet shipped warn (:class:`BackendWarning`, §7).
+``inference``. Unknown keys warn (forward-compat), never error; a directive
+whose nitrix kernel is not shipped warns (:class:`BackendWarning`, §7) -- now
+only ``inference=...(rft)``, intentionally omitted for its known failure modes.
 
 The directive grammar (spec §4.5):
 
@@ -163,14 +164,7 @@ def parse_directives(text: str) -> DirectiveSet:
                 _warn('directive', f'unknown directive key: {key!r}')
             )
 
-    _backend_awareness(link_val)
-    if residualise_val is not None and not backend.residualise_mode_shipped(
-        residualise_val
-    ):
-        _backend(
-            f'residualise={residualise_val.value} is not yet shipped (nitrix '
-            'ships aggressive + nonaggressive, §5.1)'
-        )
+    _backend_awareness(inference)
 
     family = (
         FamilySpec(
@@ -293,19 +287,24 @@ def _parse_weights(
     )
 
 
-def _backend_awareness(link: Link | None) -> None:
-    """Emit a :class:`BackendWarning` for valid IR the reference backend cannot
-    yet run, so specs stay forward-compatible. nitrix v3 ships families,
-    error-correlation/heteroscedasticity, robust/cluster SEs, Satterthwaite/
-    Kenward-Roger dof, and all smooth bases (see
-    :mod:`gramform.grammars.nwx.backend`); the one residual reachable from a
-    directive is a non-canonical link.
+def _backend_awareness(inference: InferenceSpec | None) -> None:
+    """Emit a :class:`BackendWarning` for valid IR the reference backend does
+    not run, so specs stay forward-compatible. The nitrix GP branch ships every
+    other directive-reachable axis -- families, non-canonical links
+    (``Family.with_link``), error-correlation/heteroscedasticity,
+    robust/cluster SEs, Satterthwaite/Kenward-Roger dof, all smooth bases, and
+    all residualise modes (see :mod:`gramform.grammars.nwx.backend`). The one
+    residual reachable from a directive is RFT inference, *intentionally*
+    omitted (its known failure modes), not pending.
     """
-    if link is not None and not backend.link_shipped(link):
+    if inference is not None and not backend.inference_correction_shipped(
+        inference.correction
+    ):
         _backend(
-            f'link {link.value!r} is not a nitrix built-in (only the '
-            'canonical identity/log/logit ship; others need a hand-built '
-            'Family)'
+            f'inference correction {inference.correction!r} is intentionally '
+            'not shipped (random-field theory is omitted for its known '
+            'failure modes; nitrix ships permutation/TFCE/cluster/FDR/'
+            'Bonferroni)'
         )
 
 
